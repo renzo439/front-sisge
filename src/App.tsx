@@ -59,7 +59,10 @@ function App() {
   const [view, setView] = useState<View>('upload')
   const [error, setError] = useState('')
   const permissions = permissionsFromToken(token)
-  const can = (permission: string) => permissions.includes(permission) || permissions.includes('*')
+  const can = (permission: string) => {
+    const required = permission.toUpperCase()
+    return permissions.some((value) => ['*', required, `ROLE_${required}`, `SCOPE_${required}`].includes(value.toUpperCase()))
+  }
 
   function signOut() {
     localStorage.removeItem('sisge-token')
@@ -78,12 +81,12 @@ function App() {
           <NavButton active={view === 'upload'} onClick={() => setView('upload')}>Cargar Excel</NavButton>
           <NavButton active={view === 'imports'} onClick={() => setView('imports')}>Importaciones</NavButton>
           <NavButton active={view === 'history'} onClick={() => setView('history')}>Histórico</NavButton>
-          {can('PERSONAL_VER') && <NavButton active={view === 'personal'} onClick={() => setView('personal')}>Personal</NavButton>}
+          <NavButton active={view === 'personal'} onClick={() => setView('personal')}>Legajos</NavButton>
         </nav>
         <button className="sign-out" onClick={signOut}>Cerrar sesión</button>
       </aside>
       <section className="content">
-        <header><div><p className="eyebrow">{view === 'personal' ? 'ACTUALIZACIÓN DE PERSONAL' : 'REEMPLAZANTES'}</p><h1>{view === 'upload' ? 'Nueva importación' : view === 'imports' ? 'Importaciones' : view === 'history' ? 'Histórico consolidado' : 'Padrón de personal'}</h1></div></header>
+        <header><div><p className="eyebrow">{view === 'personal' ? 'LEGAJOS' : 'REEMPLAZANTES'}</p><h1>{view === 'upload' ? 'Nueva importación' : view === 'imports' ? 'Importaciones' : view === 'history' ? 'Histórico consolidado' : 'Legajos'}</h1></div></header>
         {error && <div className="alert error"><span>{error}</span><button onClick={() => setError('')}>×</button></div>}
         {view === 'upload' && <Upload token={token} onComplete={() => setView('imports')} onError={setError} />}
         {view === 'imports' && <Imports token={token} onError={setError} />}
@@ -219,7 +222,7 @@ function Personal({ token, can, onError }: { token: string; can: (permission: st
   const [importing, setImporting] = useState(false)
   const [file, setFile] = useState<File | null>(null)
   const [detail, setDetail] = useState<PersonalImportDetail | null>(null)
-  const [mode, setMode] = useState<'list' | 'import'>('list')
+  const [mode, setMode] = useState<'list' | 'import' | 'detail'>('list')
 
   async function load(nextPage = page) {
     setLoading(true); onError('')
@@ -236,7 +239,7 @@ function Personal({ token, can, onError }: { token: string; can: (permission: st
     try {
       const form = new FormData(); form.append('file', file)
       setDetail(await api<PersonalImportDetail>(token, `/api/v1/organizaciones/${filters.organizacionId}/personal/importaciones`, { method: 'POST', body: form }))
-      setMode('list'); setFile(null)
+      setMode('detail'); setFile(null)
     } catch (exception) { onError(message(exception)) } finally { setImporting(false) }
   }
   async function refreshImport(importId: number) {
@@ -252,17 +255,17 @@ function Personal({ token, can, onError }: { token: string; can: (permission: st
   const canApprove = detail?.estado === 'EN_REVISION' && detail.filas.every((row) => row.revisada && !row.errores)
 
   return <div className="stack">
-    <section className="card filter-card"><form className="personal-filters" onSubmit={(event) => { event.preventDefault(); void load(0) }}>
+    {mode !== 'detail' && <section className="card filter-card"><form className="personal-filters" onSubmit={(event) => { event.preventDefault(); void load(0) }}>
       <label>Organización<input type="number" min="1" value={filters.organizacionId} onChange={(event) => setFilters({ ...filters, organizacionId: event.target.value })} placeholder="ID de organización" /></label>
       <label>Buscar<input value={filters.q} onChange={(event) => setFilters({ ...filters, q: event.target.value })} placeholder="DNI, CUIL, nombre o apellido" /></label>
       <button className="primary" disabled={loading}>{loading ? 'Buscando…' : 'Buscar'}</button>
       {can('PERSONAL_IMPORTAR') && <button className="secondary" type="button" onClick={() => setMode(mode === 'import' ? 'list' : 'import')}>Importar personal</button>}
-    </form></section>
+    </form></section>}
     {mode === 'import' && <section className="card"><div className="card-heading"><div><h2>Importar personal</h2><p>Seleccione un Excel (.xlsx) con la primera hoja y cabeceras requeridas.</p></div></div>
       <form className="upload-form" onSubmit={importFile}><label className="file-input">Archivo Excel<input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(event) => setFile(event.target.files?.[0] ?? null)} required /><span>{file?.name ?? 'Seleccionar archivo .xlsx'}</span></label><button className="primary" disabled={importing}>{importing ? 'Importando…' : 'Importar y revisar'}</button></form>
     </section>}
-    {people && <section className="card table-card"><h2>Padrón oficial <span className="muted">({people.totalElements})</span></h2><div className="scroll-table"><table><thead><tr><th>DNI</th><th>CUIL</th><th>Apellido y nombres</th><th>Organización</th><th>Sector</th><th>Situación</th><th>Inicio</th><th>Afectado</th></tr></thead><tbody>{people.content.map((person) => <tr key={person.id}><td>{formatDni(person.dni)}</td><td>{formatCuil(person.cuil)}</td><td>{person.apellido}, {person.nombres}</td><td>{person.organizacion}</td><td>{person.sector ?? '—'}</td><td>{person.situacionRevista ?? '—'}</td><td>{formatDate(person.fechaInicio)}</td><td>{person.afectado ? 'Sí' : 'No'}</td></tr>)}</tbody></table></div>{people.content.length === 0 && <Empty text="No hay personas para los filtros seleccionados." />}<Pagination page={page} totalPages={people.totalPages} onChange={load} /></section>}
-    {detail && <PersonalImportDetailPanel detail={detail} token={token} canReview={can('PERSONAL_REVISAR')} canApprove={can('PERSONAL_APROBAR')} eligibleToApprove={Boolean(canApprove)} onRefresh={refreshImport} onReplace={setDetail} onApprove={approve} onClose={() => setDetail(null)} onError={onError} />}
+    {mode === 'list' && people && <section className="card table-card"><h2>Padrón oficial <span className="muted">({people.totalElements})</span></h2><div className="scroll-table"><table><thead><tr><th>DNI</th><th>CUIL</th><th>Apellido y nombres</th><th>Organización</th><th>Sector</th><th>Situación</th><th>Inicio</th><th>Afectado</th></tr></thead><tbody>{people.content.map((person) => <tr key={person.id}><td>{formatDni(person.dni)}</td><td>{formatCuil(person.cuil)}</td><td>{person.apellido}, {person.nombres}</td><td>{person.organizacion}</td><td>{person.sector ?? '—'}</td><td>{person.situacionRevista ?? '—'}</td><td>{formatDate(person.fechaInicio)}</td><td>{person.afectado ? 'Sí' : 'No'}</td></tr>)}</tbody></table></div>{people.content.length === 0 && <Empty text="No hay personas para los filtros seleccionados." />}<Pagination page={page} totalPages={people.totalPages} onChange={load} /></section>}
+    {mode === 'detail' && detail && <PersonalImportDetailPanel detail={detail} token={token} canReview={can('PERSONAL_REVISAR')} canApprove={can('PERSONAL_APROBAR')} eligibleToApprove={Boolean(canApprove)} onRefresh={refreshImport} onReplace={setDetail} onApprove={approve} onClose={() => { setDetail(null); setMode('list') }} onError={onError} />}
   </div>
 }
 
@@ -372,15 +375,24 @@ function permissionsFromToken(token: string): string[] {
   try {
     const encoded = token.split('.')[1]; if (!encoded) return []
     const payload = JSON.parse(atob(encoded.replace(/-/g, '+').replace(/_/g, '/'))) as Record<string, unknown>
-    const values = ['permissions', 'permisos', 'authorities', 'roles', 'role', 'scope'].flatMap((key) => {
-      const value = payload[key]
-      return Array.isArray(value) ? value : value == null ? [] : [value]
-    }).flatMap((value) => {
-      const permission = typeof value === 'string' ? value : value && typeof value === 'object' ? String((value as Record<string, unknown>).authority ?? (value as Record<string, unknown>).name ?? '') : ''
-      return permission.split(/[\s,]+/).filter(Boolean)
-    })
+    const values = ['permissions', 'permisos', 'authorities', 'roles', 'role', 'scope', 'realm_access', 'resource_access']
+      .flatMap((key) => permissionValues(payload[key]))
     return values.some((value) => ['ADMIN', 'ROLE_ADMIN', 'ADMINISTRADOR', 'ROLE_ADMINISTRADOR'].includes(value.toUpperCase())) ? ['*'] : values
   } catch { return [] }
+}
+function permissionValues(value: unknown): string[] {
+  if (typeof value === 'string') return value.split(/[\s,]+/).filter(Boolean)
+  if (Array.isArray(value)) return value.flatMap(permissionValues)
+  if (!value || typeof value !== 'object') return []
+  const record = value as Record<string, unknown>
+  const namedPermission = ['authority', 'name', 'nombre', 'permission', 'permiso', 'code', 'codigo']
+    .flatMap((key) => permissionValues(record[key]))
+  const nestedValues = ['roles', 'role', 'authorities', 'permissions', 'permisos']
+    .flatMap((key) => permissionValues(record[key]))
+  const nestedResources = Object.entries(record)
+    .filter(([key]) => !['authority', 'name', 'nombre', 'permission', 'permiso', 'code', 'codigo', 'roles', 'role', 'authorities', 'permissions', 'permisos'].includes(key))
+    .flatMap(([, nested]) => permissionValues(nested))
+  return [...namedPermission, ...nestedValues, ...nestedResources]
 }
 function NavButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: string }) { return <button className={active ? 'nav-button active' : 'nav-button'} onClick={onClick}>{children}</button> }
 function Status({ value }: { value: string }) { return <span className={`status status-${value.toLowerCase()}`}>{value.replace(/_/g, ' ')}</span> }
