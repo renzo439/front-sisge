@@ -18,9 +18,11 @@ Para generar una compilación de producción:
 npm run build
 ```
 
-## Migración de personal
+## Relevamiento de Personal
 
-La migración actualiza el padrón oficial mediante una importación controlada: los datos no se incorporan al padrón hasta que una persona autorizada revise y apruebe cada fila.
+El módulo **Relevamiento de Personal** reúne el listado, carga, revisión, validación, aprobación y consolidación de importaciones. Se accede desde la navegación lateral en **Legajos**. La pantalla conserva el contexto mediante breadcrumbs y muestra siempre el nombre de la organización cuando lo informa la API.
+
+La carga no actualiza el padrón oficial: cada fila se revisa, se valida la importación, se aprueba y, solo entonces, un usuario administrativo puede consolidarla.
 
 ### Permisos necesarios
 
@@ -28,7 +30,9 @@ La migración actualiza el padrón oficial mediante una importación controlada:
 | --- | --- |
 | Crear una importación | `PERSONAL_IMPORTAR` |
 | Revisar y guardar una fila | `PERSONAL_REVISAR` |
+| Validar una importación | `PERSONAL_VALIDAR` o administración |
 | Aprobar una importación | `PERSONAL_APROBAR` |
+| Consolidar una importación | `PERSONAL_CONSOLIDAR` o administración |
 
 El acceso a **Legajos** está disponible para usuarios autenticados. Las acciones anteriores se muestran únicamente cuando el token incluye el permiso correspondiente.
 
@@ -48,17 +52,15 @@ El acceso a **Legajos** está disponible para usuarios autenticados. Las accione
 ### Importar y revisar
 
 1. Inicie sesión y abra **Legajos**.
-2. Indique el ID de la organización.
-3. Seleccione **Importar personal** y adjunte el archivo `.xlsx`.
-4. Presione **Importar y revisar**. El sistema envía el archivo como `multipart/form-data` al endpoint:
+2. Seleccione **Nueva importación**, elija la organización por nombre y adjunte el archivo `.xlsx`.
+3. Presione **Cargar Excel**. El sistema valida extensión y archivo vacío, y envía el archivo como `multipart/form-data` al endpoint:
 
    ```text
    POST /api/v1/organizaciones/{organizacionId}/personal/importaciones
    ```
 
-5. Al finalizar la carga se abre el detalle de la importación. Revise las filas y los errores informados por la API.
-6. Con permiso `PERSONAL_REVISAR`, seleccione **Revisar** en cada fila, corrija los datos necesarios y guarde. Guardar una fila la marca explícitamente como revisada, incluso cuando no tenía errores.
-7. Use **Recargar** para consultar nuevamente el detalle de la importación:
+4. Al finalizar la carga se abre el detalle de la importación. La grilla pagina de a 50 filas, admite filtros por texto, sector, estado y errores, y permite consultar los valores originales del Excel.
+5. Con permiso `PERSONAL_REVISAR`, seleccione **Revisar** en cada fila, corrija los datos necesarios y guarde. Guardar una fila la marca explícitamente como revisada, incluso cuando no tenía errores.
 
    ```text
    GET /api/v1/personal/importaciones/{importId}
@@ -72,7 +74,15 @@ PUT /api/v1/personal/importaciones/{importId}/filas/{rowId}
 
 La respuesta reemplaza el detalle mostrado, por lo que se reflejan inmediatamente los estados de revisión y errores devueltos por la API.
 
-### Aprobar la migración
+### Validar, aprobar y consolidar
+
+**Validar importación** consulta:
+
+```text
+POST /api/v1/admin/personal/importaciones/{importId}/validar
+```
+
+El resumen muestra personas y designaciones nuevas o existentes, maestros inexistentes, filas y adicionales inválidos y posibles duplicados. Los errores bloqueantes impiden aprobar o consolidar.
 
 El botón **Aprobar importación** se habilita solo cuando:
 
@@ -86,4 +96,27 @@ La aprobación se realiza con:
 POST /api/v1/personal/importaciones/{importId}/aprobar
 ```
 
-Luego de aprobar, la importación queda en estado `APROBADA`, se bloquean la edición y la aprobación posterior, y se actualiza el padrón oficial. El padrón puede consultarse desde Legajos filtrando por organización y buscando por DNI, CUIL, nombre o apellido.
+Luego de aprobar, la importación queda en estado `APROBADA` y se bloquea la edición. Con permiso administrativo se habilita **Consolidar**, previa confirmación reforzada:
+
+```text
+POST /api/v1/admin/personal/importaciones/{importId}/consolidar
+```
+
+La consolidación crea o actualiza personas, designaciones y adicionales del padrón. La interfaz muestra la respuesta final del backend.
+
+### Contratos de backend requeridos
+
+Los endpoints provistos cubren detalle, carga, edición y acciones, pero para completar el listado y los selectores por nombre el frontend necesita:
+
+- `GET /api/v1/personal/importaciones?size=100`, con importaciones y `organizacionNombre`.
+- `organizacionNombre` dentro de `GET /api/v1/personal/importaciones/{importacionId}` cuando el detalle no lo incluya.
+
+El selector de organización consume `GET /api/v1/organizaciones`, que devuelve únicamente las organizaciones habilitadas para `PERSONAL_IMPORTAR` del usuario autenticado.
+
+## Pruebas
+
+```bash
+npm test
+```
+
+Las pruebas focalizadas cubren carga, filtros, edición, respuestas de error y las acciones de validación, aprobación y consolidación.

@@ -1,4 +1,5 @@
 import { FormEvent, useState } from 'react'
+import PersonalSurvey from './PersonalSurvey'
 import './App.css'
 
 type Page<T> = { content: T[]; totalElements: number; totalPages: number; number: number }
@@ -86,12 +87,12 @@ function App() {
         <button className="sign-out" onClick={signOut}>Cerrar sesión</button>
       </aside>
       <section className="content">
-        <header><div><p className="eyebrow">{view === 'personal' ? 'LEGAJOS' : 'REEMPLAZANTES'}</p><h1>{view === 'upload' ? 'Nueva importación' : view === 'imports' ? 'Importaciones' : view === 'history' ? 'Histórico consolidado' : 'Legajos'}</h1></div></header>
+        <header><div><p className="eyebrow">{view === 'personal' ? 'RELEVAMIENTO DE PERSONAL' : 'REEMPLAZANTES'}</p><h1>{view === 'upload' ? 'Nueva importación' : view === 'imports' ? 'Importaciones' : view === 'history' ? 'Histórico consolidado' : 'Relevamiento de Personal'}</h1></div></header>
         {error && <div className="alert error"><span>{error}</span><button onClick={() => setError('')}>×</button></div>}
         {view === 'upload' && <Upload token={token} onComplete={() => setView('imports')} onError={setError} />}
         {view === 'imports' && <Imports token={token} onError={setError} />}
         {view === 'history' && <History token={token} onError={setError} />}
-        {view === 'personal' && <Personal token={token} can={can} onError={setError} />}
+        {view === 'personal' && <PersonalSurvey token={token} can={can} request={api} onError={setError} />}
       </section>
     </main>
   )
@@ -214,7 +215,7 @@ function History({ token, onError }: { token: string; onError: (error: string) =
   </div>
 }
 
-function Personal({ token, can, onError }: { token: string; can: (permission: string) => boolean; onError: (error: string) => void }) {
+export function Personal({ token, can, onError }: { token: string; can: (permission: string) => boolean; onError: (error: string) => void }) {
   const [filters, setFilters] = useState({ organizacionId: '', q: '' })
   const [people, setPeople] = useState<Page<Person> | null>(null)
   const [page, setPage] = useState(0)
