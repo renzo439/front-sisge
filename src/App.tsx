@@ -1,5 +1,7 @@
-import { FormEvent, useState } from 'react'
+import { FormEvent, useCallback, useEffect, useState } from 'react'
 import PersonalSurvey from './PersonalSurvey'
+import { login } from './services/authService'
+import { api, message } from './services/http'
 import './App.css'
 
 type Page<T> = { content: T[]; totalElements: number; totalPages: number; number: number }
@@ -23,6 +25,7 @@ type Replacement = {
   titular: string; instrumentoLegal: string; periodoDesde: string; periodoHasta: string; lugarTrabajo: string
   fechaCierre: string
 }
+type Organization = { id: number; nombre: string; udeo?: string }
 
 type Person = {
   id: number; dni: string; cuil: string | null; nombres: string; apellido: string; sexo: string | null
@@ -51,13 +54,8 @@ type RowReviewPayload = {
   agrupamiento?: string; funcion?: string; fechaInicio: string; antiguedadAnios?: number; afectado: boolean
 }
 
-type View = 'upload' | 'imports' | 'history' | 'personal'
-
-const apiUrl = import.meta.env.VITE_API_URL ?? ''
-
 function App() {
   const [token, setToken] = useState(() => localStorage.getItem('sisge-token') ?? '')
-  const [view, setView] = useState<View>('upload')
   const [error, setError] = useState('')
   const permissions = permissionsFromToken(token)
   const can = (permission: string) => {
@@ -74,28 +72,125 @@ function App() {
     return <Login onAuthenticated={setToken} />
   }
 
-  return (
-    <main className="app-shell">
-      <aside className="sidebar">
-        <div className="brand"><span className="brand-mark">S</span><div><strong>SISGE</strong><small>Gestión de reemplazantes</small></div></div>
-        <nav>
-          <NavButton active={view === 'upload'} onClick={() => setView('upload')}>Cargar Excel</NavButton>
-          <NavButton active={view === 'imports'} onClick={() => setView('imports')}>Importaciones</NavButton>
-          <NavButton active={view === 'history'} onClick={() => setView('history')}>Histórico</NavButton>
-          <NavButton active={view === 'personal'} onClick={() => setView('personal')}>Legajos</NavButton>
-        </nav>
-        <button className="sign-out" onClick={signOut}>Cerrar sesión</button>
-      </aside>
-      <section className="content">
-        <header><div><p className="eyebrow">{view === 'personal' ? 'RELEVAMIENTO DE PERSONAL' : 'REEMPLAZANTES'}</p><h1>{view === 'upload' ? 'Nueva importación' : view === 'imports' ? 'Importaciones' : view === 'history' ? 'Histórico consolidado' : 'Relevamiento de Personal'}</h1></div></header>
-        {error && <div className="alert error"><span>{error}</span><button onClick={() => setError('')}>×</button></div>}
-        {view === 'upload' && <Upload token={token} onComplete={() => setView('imports')} onError={setError} />}
-        {view === 'imports' && <Imports token={token} onError={setError} />}
-        {view === 'history' && <History token={token} onError={setError} />}
-        {view === 'personal' && <PersonalSurvey token={token} can={can} request={api} onError={setError} />}
-      </section>
-    </main>
-  )
+  return <Application token={token} can={can} onSignOut={signOut} error={error} onError={setError} />
+}
+
+function Application({ token, can, onSignOut, error, onError }: { token: string; can: (permission: string) => boolean; onSignOut: () => void; error: string; onError: (message: string) => void }) {
+  const [path, setPath] = useState(() => window.location.pathname === '/' ? '/dashboard' : window.location.pathname)
+  const [collapsed, setCollapsed] = useState(false)
+  const [organizations, setOrganizations] = useState<Organization[]>([])
+  const [organizationId, setOrganizationId] = useState('')
+  const user = tokenUser(token)
+  function navigate(next: string) {
+    if (next === path) return
+    window.history.pushState({}, '', next); setPath(next)
+  }
+  useEffect(() => {
+    if (window.location.pathname === '/') window.history.replaceState({}, '', '/dashboard')
+    const handlePopState = () => setPath(window.location.pathname)
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [])
+  useEffect(() => {
+    let active = true
+    api<Organization[]>(token, '/api/v1/organizaciones').then(items => {
+      if (!active) return
+      setOrganizations(items)
+      if (items.length === 1) setOrganizationId(String(items[0].id))
+    }).catch(() => undefined)
+    return () => { active = false }
+  }, [token])
+  useEffect(() => {
+    window.addEventListener('sisge-session-invalid', onSignOut)
+    return () => window.removeEventListener('sisge-session-invalid', onSignOut)
+  }, [onSignOut])
+
+  const currentOrganization = organizations.find(item => String(item.id) === organizationId)
+  const content = routeContent(path, { token, can, onError, navigate })
+  return <main className={collapsed ? 'app-layout sidebar-collapsed' : 'app-layout'}>
+    <Sidebar path={path} collapsed={collapsed} onToggle={() => setCollapsed(value => !value)} onNavigate={navigate} onSignOut={onSignOut} />
+    <section className="app-main">
+      <header className="top-header"><button className="menu-toggle" onClick={() => setCollapsed(value => !value)} aria-label="Contraer navegación">☰</button><div className="header-spacer" /><label className="organization-switcher">Organización<select value={organizationId} onChange={event => setOrganizationId(event.target.value)} disabled={organizations.length < 2}><option value="">{currentOrganization ? currentOrganization.nombre : organizations.length ? 'Seleccionar organización' : 'Sin organización seleccionada'}</option>{organizations.map(item => <option key={item.id} value={item.id}>{item.nombre}</option>)}</select></label><span className="notification-bell" aria-label="Sin notificaciones nuevas">♢</span><div className="user-menu"><span className="user-avatar">{user.slice(0, 1).toUpperCase()}</span><div><strong>{user}</strong><small>Usuario autenticado</small></div><button className="link-button" onClick={onSignOut}>Salir</button></div></header>
+      <div className="page-content"><Breadcrumb path={path} /><PageHeader path={path} />{error && <div className="alert error"><span>{error}</span><button onClick={() => onError('')}>×</button></div>}{content}</div>
+    </section>
+  </main>
+}
+
+function Sidebar({ path, collapsed, onToggle, onNavigate, onSignOut }: { path: string; collapsed: boolean; onToggle: () => void; onNavigate: (path: string) => void; onSignOut: () => void }) {
+  const groups = [
+    { label: 'Dashboard', icon: '▦', path: '/dashboard', children: [] },
+    { label: 'Personal', icon: '♟', path: '/personal/legajos', children: [{ label: 'Legajos', path: '/personal/legajos' }] },
+    { label: 'Reemplazos', icon: '↻', path: '/reemplazos', children: [{ label: 'Nueva carga', path: '/reemplazos/nueva-carga' }, { label: 'Importaciones', path: '/reemplazos/importaciones' }, { label: 'Pendientes de revisión', path: '/reemplazos/pendientes' }, { label: 'Histórico', path: '/reemplazos/historico' }] },
+    { label: 'Administración', icon: '⚙', path: '/administracion', children: ['Usuarios', 'Roles y permisos', 'Organizaciones', 'Dependencias', 'Sectores', 'Categorías', 'Agrupamientos', 'Tipos de licencia'].map(label => ({ label, path: `/administracion/${slug(label)}` })) },
+    { label: 'Auditoría', icon: '⌕', path: '/auditoria/relevamiento', children: [{ label: 'Relevamiento de personal', path: '/auditoria/relevamiento' }, { label: 'Importaciones', path: '/auditoria/importaciones' }, { label: 'Validación de datos', path: '/auditoria/validacion' }, { label: 'Diferencias', path: '/auditoria/diferencias' }, { label: 'Historial', path: '/auditoria/historial' }] },
+    { label: 'Configuración', icon: '⚙', path: '/configuracion/perfil', children: [{ label: 'Perfil', path: '/configuracion/perfil' }, { label: 'Preferencias', path: '/configuracion/preferencias' }] },
+  ]
+  return <aside className="main-sidebar"><div className="brand"><span className="brand-mark">S</span>{!collapsed && <div><strong>SISGE</strong><small>Gestión de Recursos Humanos</small></div>}<button className="collapse-button" onClick={onToggle} aria-label="Contraer menú">{collapsed ? '›' : '‹'}</button></div><nav>{groups.map(group => <div className="nav-group" key={group.label}><button className={path === group.path || path.startsWith(`${group.path}/`) || group.children.some(item => path === item.path) ? 'nav-button active' : 'nav-button'} onClick={() => onNavigate(group.children[0]?.path ?? group.path)}><span className="nav-icon">{group.icon}</span>{!collapsed && group.label}</button>{!collapsed && group.children.map(item => <button key={item.path} className={path === item.path || (item.path === '/personal/legajos' && path.startsWith('/personal/legajos/')) ? 'nav-child active' : 'nav-child'} onClick={() => onNavigate(item.path)}>{item.label}</button>)}</div>)}</nav><button className="sign-out" onClick={onSignOut}><span>↪</span>{!collapsed && 'Cerrar sesión'}</button></aside>
+}
+
+type RouteContext = { token: string; can: (permission: string) => boolean; onError: (message: string) => void; navigate: (path: string) => void }
+function routeContent(path: string, context: RouteContext) {
+  if (path === '/dashboard') return <Dashboard onNavigate={context.navigate} />
+  if (path === '/personal' || path === '/personal/legajos') return <Personal token={context.token} can={context.can} onError={context.onError} allowImport={false} onOpenLegajo={id => context.navigate(`/personal/legajos/${id}`)} />
+  if (path.startsWith('/personal/legajos/')) return <LegajoDetail />
+  if (path === '/reemplazos') return <ReplacementsHome onNavigate={context.navigate} />
+  if (path === '/reemplazos/nueva-carga') return <Upload token={context.token} onComplete={() => context.navigate('/reemplazos/importaciones')} onError={context.onError} />
+  if (path === '/reemplazos/importaciones') return <Imports token={context.token} onError={context.onError} />
+  if (path.startsWith('/reemplazos/importaciones/')) return <ReplacementDetail token={context.token} importId={path.split('/').pop() ?? ''} onError={context.onError} />
+  if (path === '/reemplazos/pendientes') return <AdminImports token={context.token} can={context.can} onError={context.onError} />
+  if (path === '/reemplazos/historico') return <History token={context.token} onError={context.onError} />
+  if (path === '/auditoria/relevamiento') return <AuditOverview />
+  if (path === '/auditoria/importaciones') return <PersonalSurvey token={context.token} can={context.can} request={api} onError={context.onError} />
+  if (path.startsWith('/auditoria/importaciones/')) return <PersonalSurvey token={context.token} can={context.can} request={api} importId={path.split('/').pop()} onError={context.onError} />
+  if (path === '/auditoria/validacion') return <PendingFeature title="Validación de datos" text="Los controles de validación estarán disponibles cuando el servicio de auditoría esté implementado." />
+  if (path === '/auditoria/diferencias') return <PendingFeature title="Diferencias entre relevamientos" text="La comparación de relevamientos estará disponible cuando se implemente el servicio correspondiente." />
+  if (path === '/auditoria/historial') return <PendingFeature title="Historial de auditoría" text="El historial de auditoría estará disponible cuando se implemente el servicio correspondiente." />
+  if (path.startsWith('/administracion')) return <PendingFeature title="Administración" text="Funcionalidad pendiente de backend." />
+  if (path.startsWith('/configuracion')) return <Settings path={path} />
+  return <PendingFeature title="Página no encontrada" text="La ruta solicitada no existe." />
+}
+
+function PageHeader({ path }: { path: string }) {
+  const pages: Record<string, [string, string]> = { '/dashboard': ['Dashboard', 'Resumen de la gestión de Recursos Humanos'], '/personal/legajos': ['Legajos', 'Consulta y gestión de la información del personal.'], '/reemplazos': ['Reemplazos', 'Gestión y seguimiento de reemplazantes.'], '/reemplazos/nueva-carga': ['Nueva carga de reemplazos', 'Importe el archivo Excel con la información de reemplazantes.'], '/reemplazos/importaciones': ['Importaciones de reemplazos', 'Consulte el estado y detalle de cada carga.'], '/reemplazos/pendientes': ['Pendientes de revisión', 'Gestione las importaciones pendientes de control.'], '/reemplazos/historico': ['Histórico de reemplazos', 'Consulta de registros consolidados.'], '/auditoria/relevamiento': ['Relevamiento de personal', 'Controlá que la información del personal se encuentre completa y actualizada.'], '/auditoria/importaciones': ['Importar personal', 'Importá información del personal para iniciar un nuevo relevamiento.'] }
+  const current = pages[path] ?? (path.startsWith('/personal/legajos/') ? ['Legajo', 'Información consolidada del personal.'] : undefined)
+  return current ? <div className="page-header"><div><p className="eyebrow">{path.startsWith('/auditoria') ? 'AUDITORÍA' : path.startsWith('/reemplazos') ? 'REEMPLAZOS' : path.startsWith('/personal') ? 'PERSONAL' : 'SISGE'}</p><h1>{current[0]}</h1><p>{current[1]}</p></div></div> : null
+}
+function Breadcrumb({ path }: { path: string }) { const labels = path.split('/').filter(Boolean).map(part => ({ dashboard: 'Dashboard', personal: 'Personal', legajos: 'Legajos', reemplazos: 'Reemplazos', auditoria: 'Auditoría', administracion: 'Administración', configuracion: 'Configuración', 'nueva-carga': 'Nueva carga', importaciones: 'Importaciones', pendientes: 'Pendientes', historico: 'Histórico', relevamiento: 'Relevamiento', validacion: 'Validación', diferencias: 'Diferencias', historial: 'Historial', perfil: 'Perfil', preferencias: 'Preferencias' }[part] ?? part)); return <div className="breadcrumbs">{labels.join(' › ')}</div> }
+function Dashboard({ onNavigate }: { onNavigate: (path: string) => void }) { return <div className="stack"><section className="dashboard-stats">{[['Personal', 'Sin información disponible', '/personal/legajos'], ['Reemplazos', 'Sin información disponible', '/reemplazos'], ['Importaciones pendientes', 'Sin información disponible', '/reemplazos/pendientes'], ['Relevamientos', 'Sin información disponible', '/auditoria/relevamiento']].map(([label, value, path]) => <button className="stat-card" key={label} onClick={() => onNavigate(path)}><span>{label}</span><strong>{value}</strong></button>)}</section><section className="dashboard-grid"><PendingFeature title="Personal por organización" text="Sin información disponible." /><PendingFeature title="Personal por categoría" text="Sin información disponible." /><PendingFeature title="Personal por sector" text="Sin información disponible." /><PendingFeature title="Actividad reciente" text="Sin información disponible." /></section></div> }
+function ReplacementsHome({ onNavigate }: { onNavigate: (path: string) => void }) { return <section className="quick-actions">{[['Nueva carga', 'Importe y valide un archivo Excel.', '/reemplazos/nueva-carga'], ['Importaciones', 'Consulte las cargas realizadas.', '/reemplazos/importaciones'], ['Pendientes de revisión', 'Revise importaciones pendientes.', '/reemplazos/pendientes'], ['Histórico', 'Consulte reemplazos consolidados.', '/reemplazos/historico']].map(([title, description, path]) => <button className="card quick-action" key={title} onClick={() => onNavigate(path)}><h2>{title}</h2><p>{description}</p><span>Ver sección →</span></button>)}</section> }
+function AuditOverview() { return <section className="dashboard-stats">{['Personal relevado', 'Información completa', 'Información incompleta', 'Con inconsistencias', 'Pendientes de revisión'].map(label => <div className="stat-card" key={label}><span>{label}</span><strong>Sin información disponible</strong></div>)}</section> }
+function PendingFeature({ title, text }: { title: string; text: string }) { return <section className="card pending-feature"><h2>{title}</h2><p>{text}</p></section> }
+function Settings({ path }: { path: string }) { return <section className="card pending-feature"><h2>{path.endsWith('perfil') ? 'Perfil' : 'Preferencias'}</h2><p>La configuración de cuenta estará disponible próximamente.</p></section> }
+function LegajoDetail() { return <section className="card pending-feature"><h2>Detalle del legajo</h2><p>El detalle estará disponible cuando el backend exponga la consulta individual de personas.</p><div className="tabs"><button className="active">Datos personales</button>{['Datos laborales', 'Destino', 'Situación', 'Licencias', 'Novedades', 'Documentación', 'Historial'].map(item => <button key={item} disabled>{item} · Próximamente</button>)}</div></section> }
+function slug(value: string) { return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, '-') }
+function tokenUser(token: string) { try { const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))) as Record<string, unknown>; return String(payload.name ?? payload.nombre ?? payload.email ?? payload.sub ?? 'Usuario') } catch { return 'Usuario' } }
+function ReplacementDetail({ token, importId, onError }: { token: string; importId: string; onError: (message: string) => void }) {
+  const [detail, setDetail] = useState<ImportDetail | null>(null)
+  const [loading, setLoading] = useState(true)
+  const load = useCallback(async () => {
+    setLoading(true)
+    try { setDetail(await api<ImportDetail>(token, `/api/v1/importaciones/${importId}`)) } catch (exception) { onError(message(exception)) } finally { setLoading(false) }
+  }, [importId, onError, token])
+  useEffect(() => { void load() }, [load])
+  async function sendReview(id: number) {
+    try { setDetail(await api<ImportDetail>(token, `/api/v1/importaciones/${id}/enviar-revision`, { method: 'POST' })) } catch (exception) { onError(message(exception)) }
+  }
+  return loading ? <p className="empty">Cargando importación…</p> : detail ? <ImportDetailPanel detail={detail} token={token} onRefresh={async () => { await load() }} onSubmit={sendReview} onError={onError} /> : <PendingFeature title="Importación no disponible" text="No fue posible obtener el detalle solicitado." />
+}
+function AdminImports({ token, can, onError }: { token: string; can: (permission: string) => boolean; onError: (message: string) => void }) {
+  const [imports, setImports] = useState<Page<ImportSummary> | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [confirm, setConfirm] = useState<{ id: number; action: 'observar' | 'rechazar' | 'aprobar' | 'cerrar' } | null>(null)
+  async function load() {
+    setLoading(true); onError('')
+    try { setImports(await api<Page<ImportSummary>>(token, '/api/v1/admin/importaciones?size=50')) } catch (exception) { onError(message(exception)) } finally { setLoading(false) }
+  }
+  async function execute() {
+    if (!confirm) return
+    try { await api(token, `/api/v1/admin/importaciones/${confirm.id}/${confirm.action}`, { method: 'POST' }); setConfirm(null); await load() } catch (exception) { onError(message(exception)) }
+  }
+  const actionLabel = confirm ? ({ observar: 'Observar', rechazar: 'Rechazar', aprobar: 'Aprobar', cerrar: 'Cerrar' }[confirm.action]) : ''
+  return <section className="card table-card"><div className="card-heading"><div><h2>Importaciones pendientes</h2><p>Consulte y resuelva las importaciones de reemplazos pendientes de revisión.</p></div><button className="primary" disabled={loading} onClick={() => void load()}>{loading ? 'Cargando…' : 'Cargar pendientes'}</button></div>{imports && (imports.content.length ? <div className="scroll-table"><table><thead><tr><th>Archivo</th><th>Organización</th><th>Fecha</th><th>Estado</th><th>Usuario</th><th>Acciones</th></tr></thead><tbody>{imports.content.map(item => <tr key={item.id}><td>{item.archivoOrigen}</td><td>{item.organizacionNombre ?? 'Organización no informada'}</td><td>{formatDate(item.fechaCreacion)}</td><td><Status value={item.estado} /></td><td>{item.creadoPorEmail ?? '—'}</td><td className="row-actions">{(['observar', 'rechazar', 'aprobar', 'cerrar'] as const).map(action => <button key={action} className="link-button" disabled={!can(`REEMPLAZOS_${action.toUpperCase()}`)} onClick={() => setConfirm({ id: item.id, action })}>{action}</button>)}</td></tr>)}</tbody></table></div> : <Empty text="No hay importaciones pendientes para los filtros seleccionados." />)}{confirm && <div className="modal-backdrop"><section className="modal confirm-dialog"><h2>{actionLabel} importación</h2><p>¿Confirma la acción seleccionada sobre esta importación?</p><div className="action-group"><button className="secondary" onClick={() => setConfirm(null)}>Cancelar</button><button className="primary" onClick={() => void execute()}>Confirmar</button></div></section></div>}</section>
 }
 
 function Login({ onAuthenticated }: { onAuthenticated: (token: string) => void }) {
@@ -108,9 +203,7 @@ function Login({ onAuthenticated }: { onAuthenticated: (token: string) => void }
     event.preventDefault()
     setLoading(true); setError('')
     try {
-      const response = await fetch(`${apiUrl}/api/v1/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) })
-      const data = await response.json()
-      if (!response.ok) throw new Error(data.message ?? 'No fue posible iniciar sesión')
+      const data = await login(email, password)
       localStorage.setItem('sisge-token', data.accessToken)
       onAuthenticated(data.accessToken)
     } catch (exception) {
@@ -130,9 +223,16 @@ function Login({ onAuthenticated }: { onAuthenticated: (token: string) => void }
 
 function Upload({ token, onComplete, onError }: { token: string; onComplete: () => void; onError: (error: string) => void }) {
   const [organizationId, setOrganizationId] = useState('')
+  const [organizations, setOrganizations] = useState<Organization[]>([])
   const [file, setFile] = useState<File | null>(null)
   const [result, setResult] = useState<ImportDetail | null>(null)
   const [loading, setLoading] = useState(false)
+  useEffect(() => {
+    api<Organization[]>(token, '/api/v1/organizaciones').then(items => {
+      setOrganizations(items)
+      if (items.length === 1) setOrganizationId(String(items[0].id))
+    }).catch((exception: unknown) => onError(message(exception)))
+  }, [token, onError])
 
   async function submit(event: FormEvent) {
     event.preventDefault()
@@ -148,7 +248,7 @@ function Upload({ token, onComplete, onError }: { token: string; onComplete: () 
   return <div className="stack">
     <section className="card"><div className="card-heading"><div><h2>Cargar archivo de reemplazantes</h2><p>El archivo debe ser Excel (.xlsx) y respetar las columnas requeridas.</p></div></div>
       <form className="upload-form" onSubmit={submit}>
-        <label>Organización / Hospital<input type="number" min="1" value={organizationId} onChange={(event) => setOrganizationId(event.target.value)} placeholder="ID de organización" required /></label>
+        <label>Organización<select value={organizationId} onChange={(event) => setOrganizationId(event.target.value)} required><option value="">Seleccionar organización</option>{organizations.map(item => <option key={item.id} value={item.id}>{item.nombre}</option>)}</select></label>
         <label className="file-input">Archivo Excel<input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(event) => setFile(event.target.files?.[0] ?? null)} required /><span>{file ? file.name : 'Seleccionar archivo .xlsx'}</span></label>
         <button className="primary" disabled={loading}>{loading ? 'Procesando…' : 'Cargar y validar'}</button>
       </form>
@@ -159,9 +259,16 @@ function Upload({ token, onComplete, onError }: { token: string; onComplete: () 
 
 function Imports({ token, onError }: { token: string; onError: (error: string) => void }) {
   const [organizationId, setOrganizationId] = useState('')
+  const [organizations, setOrganizations] = useState<Organization[]>([])
   const [imports, setImports] = useState<Page<ImportSummary> | null>(null)
   const [detail, setDetail] = useState<ImportDetail | null>(null)
   const [loading, setLoading] = useState(false)
+  useEffect(() => {
+    api<Organization[]>(token, '/api/v1/organizaciones').then(items => {
+      setOrganizations(items)
+      if (items.length === 1) setOrganizationId(String(items[0].id))
+    }).catch((exception: unknown) => onError(message(exception)))
+  }, [token, onError])
 
   async function load(event?: FormEvent) {
     event?.preventDefault(); setLoading(true); onError('')
@@ -177,7 +284,7 @@ function Imports({ token, onError }: { token: string; onError: (error: string) =
     try { setDetail(await api<ImportDetail>(token, `/api/v1/importaciones/${id}/enviar-revision`, { method: 'POST' })); await load() } catch (exception) { onError(message(exception)) }
   }
 
-  return <div className="stack"><section className="card filter-card"><form onSubmit={load}><label>Organización <input type="number" min="1" value={organizationId} onChange={(event) => setOrganizationId(event.target.value)} placeholder="ID para usuarios no globales" /></label><button className="primary" disabled={loading}>{loading ? 'Buscando…' : 'Buscar'}</button></form></section>
+  return <div className="stack"><section className="card filter-card"><form onSubmit={load}><label>Organización<select value={organizationId} onChange={(event) => setOrganizationId(event.target.value)}><option value="">Todas las organizaciones</option>{organizations.map(item => <option key={item.id} value={item.id}>{item.nombre}</option>)}</select></label><button className="primary" disabled={loading}>{loading ? 'Buscando…' : 'Buscar'}</button></form></section>
     {imports && <section className="card table-card"><h2>Importaciones</h2><table><thead><tr><th>ID</th><th>Archivo</th><th>Organización</th><th>Estado</th><th>Filas</th><th>Errores</th><th /></tr></thead><tbody>{imports.content.map((item) => <tr key={item.id}><td>#{item.id}</td><td>{item.archivoOrigen}</td><td>{item.organizacionNombre ?? item.organizacionId}</td><td><Status value={item.estado} /></td><td>{item.cantidadFilas}</td><td>{item.cantidadFilasConError}</td><td><button className="link-button" onClick={() => open(item.id)}>Ver detalle</button></td></tr>)}</tbody></table>{imports.content.length === 0 && <Empty text="No hay importaciones para los filtros seleccionados." />}</section>}
     {detail && <ImportDetailPanel detail={detail} token={token} onRefresh={open} onSubmit={submit} onError={onError} />}
   </div>
@@ -215,8 +322,9 @@ function History({ token, onError }: { token: string; onError: (error: string) =
   </div>
 }
 
-export function Personal({ token, can, onError }: { token: string; can: (permission: string) => boolean; onError: (error: string) => void }) {
+export function Personal({ token, can, onError, allowImport = false, onOpenLegajo }: { token: string; can: (permission: string) => boolean; onError: (error: string) => void; allowImport?: boolean; onOpenLegajo?: (id: number) => void }) {
   const [filters, setFilters] = useState({ organizacionId: '', q: '' })
+  const [organizations, setOrganizations] = useState<Organization[]>([])
   const [people, setPeople] = useState<Page<Person> | null>(null)
   const [page, setPage] = useState(0)
   const [loading, setLoading] = useState(false)
@@ -224,6 +332,12 @@ export function Personal({ token, can, onError }: { token: string; can: (permiss
   const [file, setFile] = useState<File | null>(null)
   const [detail, setDetail] = useState<PersonalImportDetail | null>(null)
   const [mode, setMode] = useState<'list' | 'import' | 'detail'>('list')
+  useEffect(() => {
+    api<Organization[]>(token, '/api/v1/organizaciones').then(items => {
+      setOrganizations(items)
+      if (items.length === 1) setFilters(current => ({ ...current, organizacionId: String(items[0].id) }))
+    }).catch((exception: unknown) => onError(message(exception)))
+  }, [token, onError])
 
   async function load(nextPage = page) {
     setLoading(true); onError('')
@@ -257,15 +371,15 @@ export function Personal({ token, can, onError }: { token: string; can: (permiss
 
   return <div className="stack">
     {mode !== 'detail' && <section className="card filter-card"><form className="personal-filters" onSubmit={(event) => { event.preventDefault(); void load(0) }}>
-      <label>Organización<input type="number" min="1" value={filters.organizacionId} onChange={(event) => setFilters({ ...filters, organizacionId: event.target.value })} placeholder="ID de organización" /></label>
-      <label>Buscar<input value={filters.q} onChange={(event) => setFilters({ ...filters, q: event.target.value })} placeholder="DNI, CUIL, nombre o apellido" /></label>
+      <label>Organización<select value={filters.organizacionId} onChange={(event) => setFilters({ ...filters, organizacionId: event.target.value })}><option value="">Todas las organizaciones</option>{organizations.map(item => <option key={item.id} value={item.id}>{item.nombre}</option>)}</select></label>
+      <label>Buscar<input value={filters.q} onChange={(event) => setFilters({ ...filters, q: event.target.value })} placeholder="DNI, apellido, nombre o número de legajo..." /></label>
       <button className="primary" disabled={loading}>{loading ? 'Buscando…' : 'Buscar'}</button>
-      {can('PERSONAL_IMPORTAR') && <button className="secondary" type="button" onClick={() => setMode(mode === 'import' ? 'list' : 'import')}>Importar personal</button>}
+      {allowImport && can('PERSONAL_IMPORTAR') && <button className="secondary" type="button" onClick={() => setMode(mode === 'import' ? 'list' : 'import')}>Importar personal</button>}
     </form></section>}
     {mode === 'import' && <section className="card"><div className="card-heading"><div><h2>Importar personal</h2><p>Seleccione un Excel (.xlsx) con la primera hoja y cabeceras requeridas.</p></div></div>
       <form className="upload-form" onSubmit={importFile}><label className="file-input">Archivo Excel<input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(event) => setFile(event.target.files?.[0] ?? null)} required /><span>{file?.name ?? 'Seleccionar archivo .xlsx'}</span></label><button className="primary" disabled={importing}>{importing ? 'Importando…' : 'Importar y revisar'}</button></form>
     </section>}
-    {mode === 'list' && people && <section className="card table-card"><h2>Padrón oficial <span className="muted">({people.totalElements})</span></h2><div className="scroll-table"><table><thead><tr><th>DNI</th><th>CUIL</th><th>Apellido y nombres</th><th>Organización</th><th>Sector</th><th>Situación</th><th>Inicio</th><th>Afectado</th></tr></thead><tbody>{people.content.map((person) => <tr key={person.id}><td>{formatDni(person.dni)}</td><td>{formatCuil(person.cuil)}</td><td>{person.apellido}, {person.nombres}</td><td>{person.organizacion}</td><td>{person.sector ?? '—'}</td><td>{person.situacionRevista ?? '—'}</td><td>{formatDate(person.fechaInicio)}</td><td>{person.afectado ? 'Sí' : 'No'}</td></tr>)}</tbody></table></div>{people.content.length === 0 && <Empty text="No hay personas para los filtros seleccionados." />}<Pagination page={page} totalPages={people.totalPages} onChange={load} /></section>}
+    {mode === 'list' && people && <section className="card table-card"><h2>Legajos <span className="muted">({people.totalElements})</span></h2><div className="scroll-table"><table><thead><tr><th>DNI</th><th>Apellido y nombre</th><th>Organización</th><th>Sector</th><th>Categoría</th><th>Situación</th><th>Acciones</th></tr></thead><tbody>{people.content.map((person) => <tr key={person.id}><td>{formatDni(person.dni)}</td><td>{person.apellido}, {person.nombres}</td><td>{person.organizacion}</td><td>{person.sector ?? '—'}</td><td>{person.categoria ?? '—'}</td><td>{person.situacionRevista ?? '—'}</td><td>{onOpenLegajo && <button className="link-button" onClick={() => onOpenLegajo(person.id)}>Ver legajo</button>}</td></tr>)}</tbody></table></div>{people.content.length === 0 && <Empty text="No hay personas para los filtros seleccionados." />}<Pagination page={page} totalPages={people.totalPages} onChange={load} /></section>}
     {mode === 'detail' && detail && <PersonalImportDetailPanel detail={detail} token={token} canReview={can('PERSONAL_REVISAR')} canApprove={can('PERSONAL_APROBAR')} eligibleToApprove={Boolean(canApprove)} onRefresh={refreshImport} onReplace={setDetail} onApprove={approve} onClose={() => { setDetail(null); setMode('list') }} onError={onError} />}
   </div>
 }
@@ -311,12 +425,6 @@ function PersonalRowEditor({ row, importId, token, onClose, onSaved, onError }: 
     </div><button className="primary" disabled={saving}>{saving ? 'Guardando…' : 'Guardar revisión'}</button></form></div>
 }
 
-async function api<T = unknown>(token: string, path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${apiUrl}${path}`, { ...init, headers: { Authorization: `Bearer ${token}`, ...(init.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }), ...init.headers } })
-  const data = await response.json().catch(() => ({}))
-  if (!response.ok) throw new Error(data.message ?? 'La solicitud no pudo completarse')
-  return data as T
-}
 function rowForm(row: PersonalImportRow): RowReviewForm {
   const raw = rawValues(row)
   const value = (field: keyof PersonalImportRow, keys: string[]) => String(row[field] ?? rawValueFrom(raw, keys) ?? '')
@@ -371,7 +479,6 @@ function dateInput(value: string) {
 }
 function digits(value: string) { return value.replace(/\D/g, '') }
 function formatDni(value?: string | null) { const result = digits(value ?? ''); return result ? new Intl.NumberFormat('es-AR').format(Number(result)) : '—' }
-function formatCuil(value?: string | null) { const result = digits(value ?? ''); return result.length === 11 ? `${result.slice(0, 2)}-${result.slice(2, 10)}-${result.slice(10)}` : result || '—' }
 function permissionsFromToken(token: string): string[] {
   try {
     const encoded = token.split('.')[1]; if (!encoded) return []
@@ -395,12 +502,9 @@ function permissionValues(value: unknown): string[] {
     .flatMap(([, nested]) => permissionValues(nested))
   return [...namedPermission, ...nestedValues, ...nestedResources]
 }
-function NavButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: string }) { return <button className={active ? 'nav-button active' : 'nav-button'} onClick={onClick}>{children}</button> }
 function Status({ value }: { value: string }) { return <span className={`status status-${value.toLowerCase()}`}>{value.replace(/_/g, ' ')}</span> }
 function Stat({ label: statLabel, value }: { label: string; value: number }) { return <div className="stat"><strong>{value}</strong><span>{statLabel}</span></div> }
 function Empty({ text }: { text: string }) { return <p className="empty">{text}</p> }
 function label(value: string) { return ({ organizacionId: 'Organización', cuil: 'CUIL', reemplazante: 'Reemplazante', titular: 'Titular', agrupamiento: 'Agrupamiento', funcionTitular: 'Función titular', tipoLicencia: 'Tipo de licencia', observaciones: 'Observaciones', lugarTrabajo: 'Lugar de trabajo' } as Record<string, string>)[value] ?? value }
 function formatDate(value?: string) { return value ? new Intl.DateTimeFormat('es-AR', { dateStyle: 'medium' }).format(new Date(value)) : '—' }
-function message(exception: unknown) { return exception instanceof Error ? exception.message : 'Ocurrió un error inesperado' }
-
 export default App

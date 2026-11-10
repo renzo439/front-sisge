@@ -10,19 +10,18 @@ const detail = { ...summary, filas: [
 ] }
 type Request = <T>(token: string, path: string, init?: RequestInit) => Promise<T>
 
-function renderModule(request: Request, permissions = ['PERSONAL_IMPORTAR', 'PERSONAL_REVISAR', 'PERSONAL_VALIDAR', 'PERSONAL_APROBAR', 'PERSONAL_CONSOLIDAR']) {
+function renderModule(request: Request, importId?: string, permissions = ['PERSONAL_IMPORTAR', 'PERSONAL_REVISAR', 'PERSONAL_VALIDAR', 'PERSONAL_APROBAR', 'PERSONAL_CONSOLIDAR']) {
   const onError = vi.fn()
-  return { onError, ...render(<PersonalSurvey token="token" can={permission => permissions.includes(permission)} request={request} onError={onError} />) }
+  return { onError, ...render(<PersonalSurvey token="token" can={permission => permissions.includes(permission)} request={request} importId={importId} onError={onError} />) }
 }
 
 describe('PersonalSurvey', () => {
   afterEach(() => { cleanup(); localStorage.clear() })
 
   it('carga un Excel y abre el detalle creado', async () => {
-    const request = vi.fn(async (_token: string, path: string) => path.includes('?size') ? [] : path === '/api/v1/organizaciones' ? organizations : detail) as unknown as Request
+    const request = vi.fn(async (_token: string, path: string) => path === '/api/v1/organizaciones' ? organizations : detail) as unknown as Request
     renderModule(request)
-    await screen.findByText('No hay importaciones de personal disponibles.')
-    fireEvent.click(screen.getByText('Nueva importación'))
+    await screen.findByText('Importar personal')
     fireEvent.change(screen.getByLabelText('Organización'), { target: { value: '1' } })
     fireEvent.change(screen.getByLabelText('Archivo Excel'), { target: { files: [new File(['datos'], 'personal.xlsx')] } })
     fireEvent.submit(screen.getByText('Cargar Excel').closest('form')!)
@@ -32,9 +31,8 @@ describe('PersonalSurvey', () => {
 
   it('filtra filas y actualiza solamente la fila revisada', async () => {
     const updated = { ...detail.filas[0], revisada: true, nombres: 'Ana María' }
-    const request = vi.fn(async (_token: string, path: string) => path.includes('?size') ? { content: [summary] } : path === '/api/v1/organizaciones' ? organizations : path.endsWith('/15') ? detail : updated) as unknown as Request
-    renderModule(request)
-    fireEvent.click(await screen.findByText('Abrir'))
+    const request = vi.fn(async (_token: string, path: string) => path === '/api/v1/organizaciones' ? organizations : path.endsWith('/15') ? detail : updated) as unknown as Request
+    renderModule(request, '15')
     await screen.findByText('Pérez')
     fireEvent.change(screen.getByPlaceholderText('DNI, CUIL, apellido o nombres'), { target: { value: 'Pérez' } })
     expect(screen.queryByText('Gómez')).toBeNull()
@@ -48,15 +46,13 @@ describe('PersonalSurvey', () => {
   it('ejecuta validación, aprobación y consolidación con confirmación', async () => {
     const ready = { ...detail, filas: detail.filas.map(row => ({ ...row, revisada: true, errores: '' })) }
     const request = vi.fn(async (_token: string, path: string) => {
-      if (path.includes('?size')) return { content: [summary] }
       if (path === '/api/v1/organizaciones') return organizations
       if (path.endsWith('/15')) return ready
       if (path.endsWith('/validar')) return { personasNuevas: 1, filasInvalidas: 0, erroresBloqueantes: false }
       if (path.endsWith('/aprobar')) return { ...ready, estado: 'APROBADA' }
       return { creados: 1, actualizados: 1, errores: 0 }
     }) as unknown as Request
-    renderModule(request)
-    fireEvent.click(await screen.findByText('Abrir'))
+    renderModule(request, '15')
     fireEvent.click(await screen.findByText('Validar importación'))
     await screen.findByText('Resultado de la validación')
     fireEvent.click(screen.getByText('Aprobar importación'))
@@ -69,13 +65,11 @@ describe('PersonalSurvey', () => {
 
   it('informa los errores de la API al validar', async () => {
     const request = vi.fn(async (_token: string, path: string) => {
-      if (path.includes('?size')) return { content: [summary] }
       if (path === '/api/v1/organizaciones') return organizations
       if (path.endsWith('/15')) return detail
       throw new Error('No autorizado para validar')
     }) as unknown as Request
-    const { onError } = renderModule(request)
-    fireEvent.click(await screen.findByText('Abrir'))
+    const { onError } = renderModule(request, '15')
     fireEvent.click(await screen.findByText('Validar importación'))
     await waitFor(() => expect(onError).toHaveBeenCalledWith('No autorizado para validar'))
   })

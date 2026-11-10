@@ -17,9 +17,7 @@ type ImportDetail = {
   fechaCreacion?: string; creadoPorEmail?: string; responsable?: string; cantidadFilas?: number
   cantidadFilasValidas?: number; cantidadFilasConError?: number; filas: ImportRow[]
 }
-type ImportSummary = Omit<ImportDetail, 'filas'> & { filas?: ImportRow[] }
-type Page<T> = { content: T[]; totalPages?: number; totalElements?: number }
-type View = 'list' | 'upload' | 'detail'
+type View = 'upload' | 'detail'
 type Validation = Record<string, unknown> & { erroresBloqueantes?: boolean; filasInvalidas?: number }
 
 const text = (value: unknown) => value == null || value === '' ? '—' : String(value)
@@ -50,67 +48,48 @@ function badge(row: ImportRow) {
   return <span className={`review-badge ${state}`}>{state === 'error' ? 'Con errores' : state === 'valid' ? 'Válida y revisada' : 'Pendiente'}</span>
 }
 
-export default function PersonalSurvey({ token, can, request, onError }: { token: string; can: Can; request: Request; onError: (message: string) => void }) {
-  const [view, setView] = useState<View>('list')
-  const [imports, setImports] = useState<ImportSummary[]>([])
+export default function PersonalSurvey({ token, can, request, onError, importId }: { token: string; can: Can; request: Request; onError: (message: string) => void; importId?: string }) {
+  const [view, setView] = useState<View>(importId ? 'detail' : 'upload')
   const [organizations, setOrganizations] = useState<Organization[]>([])
   const [selectedOrganization, setSelectedOrganization] = useState('')
   const [detail, setDetail] = useState<ImportDetail | null>(null)
   const [loading, setLoading] = useState(false)
 
-  async function loadImports() {
-    setLoading(true); onError('')
-    try {
-      const response = await request<Page<ImportSummary> | ImportSummary[]>(token, '/api/v1/personal/importaciones?size=100')
-      const content = Array.isArray(response) ? response : response.content
-      setImports(content)
-    } catch (error) { onError(errorText(error)) } finally { setLoading(false) }
-  }
   useEffect(() => {
     let active = true
-    async function initialLoad() {
+    async function loadCatalog() {
       try {
-        const [response, catalog] = await Promise.all([
-          request<Page<ImportSummary> | ImportSummary[]>(token, '/api/v1/personal/importaciones?size=100'),
-          request<Organization[]>(token, '/api/v1/organizaciones'),
-        ])
+        const catalog = await request<Organization[]>(token, '/api/v1/organizaciones')
         if (!active) return
-        const content = Array.isArray(response) ? response : response.content
-        setImports(content); setOrganizations(catalog)
+        setOrganizations(catalog)
       } catch (error) {
         if (active) onError(errorText(error))
       }
     }
-    void initialLoad()
+    void loadCatalog()
     return () => { active = false }
   }, [request, token, onError])
-  async function open(importId: number) {
+  useEffect(() => {
+    if (!importId) return
+    let active = true
     setLoading(true); onError('')
-    try {
-      const result = await request<ImportDetail>(token, `/api/v1/personal/importaciones/${importId}`)
-      setDetail(result); setView('detail')
-    } catch (error) { onError(errorText(error)) } finally { setLoading(false) }
-  }
-  function showList() { setView('list'); setDetail(null); void loadImports() }
+    request<ImportDetail>(token, `/api/v1/personal/importaciones/${importId}`).then(result => {
+      if (active) { setDetail(result); setView('detail') }
+    }).catch(error => { if (active) onError(errorText(error)) }).finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
+  }, [importId, onError, request, token])
+  function showUpload() { setView('upload'); setDetail(null) }
 
   return <div className="stack personal-survey">
     <div className="breadcrumbs">Relevamiento de Personal <span>›</span> Importaciones {detail && <><span>›</span> {detail.organizacionNombre ?? 'Organización sin nombre'}</>}</div>
     <div className="personal-heading">
-      <div><p className="eyebrow">RELEVAMIENTO DE PERSONAL</p><h2>{view === 'upload' ? 'Nueva importación' : view === 'detail' ? 'Importación de personal' : 'Importaciones'}</h2></div>
-      {view !== 'upload' && can('PERSONAL_IMPORTAR') && <button className="primary" onClick={() => setView('upload')}>Nueva importación</button>}
-      {view === 'upload' && <button className="secondary" onClick={showList}>Volver a importaciones</button>}
+      <div><p className="eyebrow">RELEVAMIENTO DE PERSONAL</p><h2>{view === 'upload' ? 'Importar personal' : 'Importación de personal'}</h2></div>
+      {view === 'detail' && can('PERSONAL_IMPORTAR') && <button className="secondary" onClick={showUpload}>Nueva importación</button>}
     </div>
-    {view === 'list' && <ImportList imports={imports} loading={loading} onOpen={open} onReload={loadImports} />}
     {view === 'upload' && <UploadForm token={token} request={request} organizations={organizations} organizationId={selectedOrganization} onOrganization={setSelectedOrganization} onCreated={(created) => { setDetail(created); setView('detail') }} onError={onError} />}
-    {view === 'detail' && detail && <ImportWorkspace token={token} can={can} request={request} detail={detail} organizations={organizations} onReplace={setDetail} onBack={showList} onError={onError} />}
+    {view === 'detail' && loading && <p className="empty">Cargando importación…</p>}
+    {view === 'detail' && detail && <ImportWorkspace token={token} can={can} request={request} detail={detail} organizations={organizations} onReplace={setDetail} onBack={showUpload} onError={onError} />}
   </div>
-}
-
-function ImportList({ imports, loading, onOpen, onReload }: { imports: ImportSummary[]; loading: boolean; onOpen: (id: number) => void; onReload: () => Promise<void> }) {
-  return <section className="card table-card">
-    <div className="card-heading"><div><h2>Importaciones de personal</h2><p>Seleccione una importación para revisar sus filas y continuar el proceso.</p></div><button className="secondary" disabled={loading} onClick={() => void onReload()}>{loading ? 'Actualizando…' : 'Actualizar'}</button></div>
-    {loading && !imports.length ? <p className="empty">Cargando importaciones…</p> : imports.length ? <div className="scroll-table"><table><thead><tr><th>Archivo</th><th>Organización</th><th>Estado</th><th>Fecha</th><th>Filas</th><th>Errores</th><th /></tr></thead><tbody>{imports.map(item => <tr key={item.id}><td>{item.archivoOrigen}</td><td>{item.organizacionNombre ?? 'Organización sin nombre'}</td><td>{status(item.estado)}</td><td>{formatDate(item.fechaCreacion)}</td><td>{item.cantidadFilas ?? '—'}</td><td>{item.cantidadFilasConError ?? '—'}</td><td><button className="link-button" onClick={() => onOpen(item.id)}>Abrir</button></td></tr>)}</tbody></table></div> : <p className="empty">No hay importaciones de personal disponibles.</p>}
-  </section>
 }
 
 function UploadForm({ token, request, organizations, organizationId, onOrganization, onCreated, onError }: { token: string; request: Request; organizations: Organization[]; organizationId: string; onOrganization: (value: string) => void; onCreated: (detail: ImportDetail) => void; onError: (message: string) => void }) {
