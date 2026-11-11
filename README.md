@@ -41,12 +41,16 @@ El shell de la aplicación está compuesto por `Application`, `Sidebar`, `Breadc
 | Revisión de reemplazos | `GET /api/v1/admin/importaciones`, `POST /api/v1/admin/importaciones/{id}/observar`, `/rechazar`, `/aprobar`, `/cerrar` |
 | Histórico | `GET /api/v1/reemplazantes` |
 | Auditoría | `POST /api/v1/organizaciones/{organizacionId}/personal/importaciones`, `GET /api/v1/personal/importaciones/{id}`, `PUT /api/v1/personal/importaciones/{importacionId}/filas/{filaId}`, `POST /api/v1/personal/importaciones/{id}/aprobar` |
+| Usuarios | `POST /api/v1/organizaciones/{organizacionId}/usuarios`, `GET /api/v1/organizaciones/{organizacionId}/usuarios`, `GET /api/v1/organizaciones/{organizacionId}/usuarios/{usuarioId}`, `PUT /api/v1/organizaciones/{organizacionId}/usuarios/{usuarioId}/rol`, `GET /api/v1/admin/usuarios`, `GET /api/v1/admin/usuarios/{usuarioId}`, `PUT /api/v1/admin/usuarios/{usuarioId}/rol-global` |
+| Roles | `GET /api/v1/roles`, `GET /api/v1/roles/{id}`, `POST /api/v1/roles`, `PUT /api/v1/roles/{id}`, `DELETE /api/v1/roles/{id}` |
+| Permisos | `GET /api/v1/permisos`, `GET /api/v1/permisos/{id}`, `POST /api/v1/permisos`, `PUT /api/v1/permisos/{id}`, `DELETE /api/v1/permisos/{id}` |
+| Organizaciones (admin) | `GET /api/v1/admin/organizaciones`, `GET /api/v1/admin/organizaciones/{id}`, `POST /api/v1/admin/organizaciones`, `PUT /api/v1/admin/organizaciones/{id}`, `DELETE /api/v1/admin/organizaciones/{id}` |
 
 ## Funcionalidades preparadas
 
 - Dashboard y tarjetas de gestión sin métricas inventadas.
 - Detalle de legajo y pestañas visibles sin datos simulados.
-- Administración, configuración, validación, diferencias e historial de auditoría con estado explícito de dependencia de backend.
+- Alta de usuarios por organización y edición de rol de membresía/rol global en `/administracion/usuarios`, ABM de roles y permisos en `/administracion/roles-y-permisos`, ABM del catálogo de permisos en `/administracion/permisos` (requiere `PERMISOS_GESTIONAR`) y ABM de organizaciones en `/administracion/organizaciones` (requiere `ORGANIZACIONES_GESTIONAR`); el selector de permisos del formulario de roles se carga desde `GET /api/v1/permisos`. El resto de Administración, configuración, validación, diferencias e historial de auditoría mantiene estado explícito de dependencia de backend.
 - Selector de organización por nombre; el ID se usa solo internamente.
 
 ## Endpoints necesarios para completar las vistas

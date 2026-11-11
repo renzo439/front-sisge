@@ -1,5 +1,7 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react'
 import PersonalSurvey from './PersonalSurvey'
+import Permissions, { type Permission } from './Permissions'
+import Users from './Users'
 import { login } from './services/authService'
 import { api, message } from './services/http'
 import './App.css'
@@ -26,6 +28,12 @@ type Replacement = {
   fechaCierre: string
 }
 type Organization = { id: number; nombre: string; udeo?: string }
+type AdminOrganization = { id: number; nombre: string; udeo?: string | null; descripcion?: string | null; createdAt?: string }
+type OrganizationForm = { nombre: string; udeo: string; descripcion: string }
+type OrganizationPayload = { nombre: string; udeo?: string; descripcion?: string }
+type Role = { id: number; nombre: string; descripcion?: string | null; globalRole: boolean; permisos?: string[] | null }
+type RoleForm = { nombre: string; descripcion: string; globalRole: boolean; permisos: string }
+type RolePayload = { nombre: string; descripcion?: string; globalRole: boolean; permisos: string[] }
 
 type Person = {
   id: number; dni: string; cuil: string | null; nombres: string; apellido: string; sexo: string | null
@@ -121,7 +129,7 @@ function Sidebar({ path, collapsed, onToggle, onNavigate, onSignOut }: { path: s
     { label: 'Dashboard', icon: '▦', path: '/dashboard', children: [] },
     { label: 'Personal', icon: '♟', path: '/personal/legajos', children: [{ label: 'Legajos', path: '/personal/legajos' }] },
     { label: 'Reemplazos', icon: '↻', path: '/reemplazos', children: [{ label: 'Nueva carga', path: '/reemplazos/nueva-carga' }, { label: 'Importaciones', path: '/reemplazos/importaciones' }, { label: 'Pendientes de revisión', path: '/reemplazos/pendientes' }, { label: 'Histórico', path: '/reemplazos/historico' }] },
-    { label: 'Administración', icon: '⚙', path: '/administracion', children: ['Usuarios', 'Roles y permisos', 'Organizaciones', 'Dependencias', 'Sectores', 'Categorías', 'Agrupamientos', 'Tipos de licencia'].map(label => ({ label, path: `/administracion/${slug(label)}` })) },
+    { label: 'Administración', icon: '⚙', path: '/administracion', children: ['Usuarios', 'Roles y permisos', 'Permisos', 'Organizaciones', 'Dependencias', 'Sectores', 'Categorías', 'Agrupamientos', 'Tipos de licencia'].map(label => ({ label, path: `/administracion/${slug(label)}` })) },
     { label: 'Auditoría', icon: '⌕', path: '/auditoria/relevamiento', children: [{ label: 'Relevamiento de personal', path: '/auditoria/relevamiento' }, { label: 'Importaciones', path: '/auditoria/importaciones' }, { label: 'Validación de datos', path: '/auditoria/validacion' }, { label: 'Diferencias', path: '/auditoria/diferencias' }, { label: 'Historial', path: '/auditoria/historial' }] },
     { label: 'Configuración', icon: '⚙', path: '/configuracion/perfil', children: [{ label: 'Perfil', path: '/configuracion/perfil' }, { label: 'Preferencias', path: '/configuracion/preferencias' }] },
   ]
@@ -145,17 +153,21 @@ function routeContent(path: string, context: RouteContext) {
   if (path === '/auditoria/validacion') return <PendingFeature title="Validación de datos" text="Los controles de validación estarán disponibles cuando el servicio de auditoría esté implementado." />
   if (path === '/auditoria/diferencias') return <PendingFeature title="Diferencias entre relevamientos" text="La comparación de relevamientos estará disponible cuando se implemente el servicio correspondiente." />
   if (path === '/auditoria/historial') return <PendingFeature title="Historial de auditoría" text="El historial de auditoría estará disponible cuando se implemente el servicio correspondiente." />
+  if (path === '/administracion/usuarios') return <Users token={context.token} can={context.can} request={api} onError={context.onError} />
+  if (path === '/administracion/roles-y-permisos') return <Roles token={context.token} onError={context.onError} />
+  if (path === '/administracion/permisos') return <Permissions token={context.token} can={context.can} request={api} onError={context.onError} />
+  if (path === '/administracion/organizaciones') return context.can('ORGANIZACIONES_GESTIONAR') ? <AdminOrganizations token={context.token} onError={context.onError} /> : <PendingFeature title="Acceso restringido" text="Se requiere el permiso global ORGANIZACIONES_GESTIONAR para administrar organizaciones." />
   if (path.startsWith('/administracion')) return <PendingFeature title="Administración" text="Funcionalidad pendiente de backend." />
   if (path.startsWith('/configuracion')) return <Settings path={path} />
   return <PendingFeature title="Página no encontrada" text="La ruta solicitada no existe." />
 }
 
 function PageHeader({ path }: { path: string }) {
-  const pages: Record<string, [string, string]> = { '/dashboard': ['Dashboard', 'Resumen de la gestión de Recursos Humanos'], '/personal/legajos': ['Legajos', 'Consulta y gestión de la información del personal.'], '/reemplazos': ['Reemplazos', 'Gestión y seguimiento de reemplazantes.'], '/reemplazos/nueva-carga': ['Nueva carga de reemplazos', 'Importe el archivo Excel con la información de reemplazantes.'], '/reemplazos/importaciones': ['Importaciones de reemplazos', 'Consulte el estado y detalle de cada carga.'], '/reemplazos/pendientes': ['Pendientes de revisión', 'Gestione las importaciones pendientes de control.'], '/reemplazos/historico': ['Histórico de reemplazos', 'Consulta de registros consolidados.'], '/auditoria/relevamiento': ['Relevamiento de personal', 'Controlá que la información del personal se encuentre completa y actualizada.'], '/auditoria/importaciones': ['Importar personal', 'Importá información del personal para iniciar un nuevo relevamiento.'] }
+  const pages: Record<string, [string, string]> = { '/dashboard': ['Dashboard', 'Resumen de la gestión de Recursos Humanos'], '/personal/legajos': ['Legajos', 'Consulta y gestión de la información del personal.'], '/reemplazos': ['Reemplazos', 'Gestión y seguimiento de reemplazantes.'], '/reemplazos/nueva-carga': ['Nueva carga de reemplazos', 'Importe el archivo Excel con la información de reemplazantes.'], '/reemplazos/importaciones': ['Importaciones de reemplazos', 'Consulte el estado y detalle de cada carga.'], '/reemplazos/pendientes': ['Pendientes de revisión', 'Gestione las importaciones pendientes de control.'], '/reemplazos/historico': ['Histórico de reemplazos', 'Consulta de registros consolidados.'], '/auditoria/relevamiento': ['Relevamiento de personal', 'Controlá que la información del personal se encuentre completa y actualizada.'], '/auditoria/importaciones': ['Importar personal', 'Importá información del personal para iniciar un nuevo relevamiento.'], '/administracion/usuarios': ['Usuarios', 'Alta de usuarios por organización.'], '/administracion/roles-y-permisos': ['Roles y permisos', 'Alta, edición y baja de roles y sus permisos.'], '/administracion/permisos': ['Permisos', 'Alta, edición y baja de permisos.'], '/administracion/organizaciones': ['Organizaciones', 'Alta, edición y baja de organizaciones.'] }
   const current = pages[path] ?? (path.startsWith('/personal/legajos/') ? ['Legajo', 'Información consolidada del personal.'] : undefined)
   return current ? <div className="page-header"><div><p className="eyebrow">{path.startsWith('/auditoria') ? 'AUDITORÍA' : path.startsWith('/reemplazos') ? 'REEMPLAZOS' : path.startsWith('/personal') ? 'PERSONAL' : 'SISGE'}</p><h1>{current[0]}</h1><p>{current[1]}</p></div></div> : null
 }
-function Breadcrumb({ path }: { path: string }) { const labels = path.split('/').filter(Boolean).map(part => ({ dashboard: 'Dashboard', personal: 'Personal', legajos: 'Legajos', reemplazos: 'Reemplazos', auditoria: 'Auditoría', administracion: 'Administración', configuracion: 'Configuración', 'nueva-carga': 'Nueva carga', importaciones: 'Importaciones', pendientes: 'Pendientes', historico: 'Histórico', relevamiento: 'Relevamiento', validacion: 'Validación', diferencias: 'Diferencias', historial: 'Historial', perfil: 'Perfil', preferencias: 'Preferencias' }[part] ?? part)); return <div className="breadcrumbs">{labels.join(' › ')}</div> }
+function Breadcrumb({ path }: { path: string }) { const labels = path.split('/').filter(Boolean).map(part => ({ dashboard: 'Dashboard', personal: 'Personal', legajos: 'Legajos', reemplazos: 'Reemplazos', auditoria: 'Auditoría', administracion: 'Administración', configuracion: 'Configuración', 'nueva-carga': 'Nueva carga', importaciones: 'Importaciones', pendientes: 'Pendientes', historico: 'Histórico', relevamiento: 'Relevamiento', validacion: 'Validación', diferencias: 'Diferencias', historial: 'Historial', usuarios: 'Usuarios', 'roles-y-permisos': 'Roles y permisos', permisos: 'Permisos', organizaciones: 'Organizaciones', perfil: 'Perfil', preferencias: 'Preferencias' }[part] ?? part)); return <div className="breadcrumbs">{labels.join(' › ')}</div> }
 function Dashboard({ onNavigate }: { onNavigate: (path: string) => void }) { return <div className="stack"><section className="dashboard-stats">{[['Personal', 'Sin información disponible', '/personal/legajos'], ['Reemplazos', 'Sin información disponible', '/reemplazos'], ['Importaciones pendientes', 'Sin información disponible', '/reemplazos/pendientes'], ['Relevamientos', 'Sin información disponible', '/auditoria/relevamiento']].map(([label, value, path]) => <button className="stat-card" key={label} onClick={() => onNavigate(path)}><span>{label}</span><strong>{value}</strong></button>)}</section><section className="dashboard-grid"><PendingFeature title="Personal por organización" text="Sin información disponible." /><PendingFeature title="Personal por categoría" text="Sin información disponible." /><PendingFeature title="Personal por sector" text="Sin información disponible." /><PendingFeature title="Actividad reciente" text="Sin información disponible." /></section></div> }
 function ReplacementsHome({ onNavigate }: { onNavigate: (path: string) => void }) { return <section className="quick-actions">{[['Nueva carga', 'Importe y valide un archivo Excel.', '/reemplazos/nueva-carga'], ['Importaciones', 'Consulte las cargas realizadas.', '/reemplazos/importaciones'], ['Pendientes de revisión', 'Revise importaciones pendientes.', '/reemplazos/pendientes'], ['Histórico', 'Consulte reemplazos consolidados.', '/reemplazos/historico']].map(([title, description, path]) => <button className="card quick-action" key={title} onClick={() => onNavigate(path)}><h2>{title}</h2><p>{description}</p><span>Ver sección →</span></button>)}</section> }
 function AuditOverview() { return <section className="dashboard-stats">{['Personal relevado', 'Información completa', 'Información incompleta', 'Con inconsistencias', 'Pendientes de revisión'].map(label => <div className="stat-card" key={label}><span>{label}</span><strong>Sin información disponible</strong></div>)}</section> }
@@ -191,6 +203,179 @@ function AdminImports({ token, can, onError }: { token: string; can: (permission
   }
   const actionLabel = confirm ? ({ observar: 'Observar', rechazar: 'Rechazar', aprobar: 'Aprobar', cerrar: 'Cerrar' }[confirm.action]) : ''
   return <section className="card table-card"><div className="card-heading"><div><h2>Importaciones pendientes</h2><p>Consulte y resuelva las importaciones de reemplazos pendientes de revisión.</p></div><button className="primary" disabled={loading} onClick={() => void load()}>{loading ? 'Cargando…' : 'Cargar pendientes'}</button></div>{imports && (imports.content.length ? <div className="scroll-table"><table><thead><tr><th>Archivo</th><th>Organización</th><th>Fecha</th><th>Estado</th><th>Usuario</th><th>Acciones</th></tr></thead><tbody>{imports.content.map(item => <tr key={item.id}><td>{item.archivoOrigen}</td><td>{item.organizacionNombre ?? 'Organización no informada'}</td><td>{formatDate(item.fechaCreacion)}</td><td><Status value={item.estado} /></td><td>{item.creadoPorEmail ?? '—'}</td><td className="row-actions">{(['observar', 'rechazar', 'aprobar', 'cerrar'] as const).map(action => <button key={action} className="link-button" disabled={!can(`REEMPLAZOS_${action.toUpperCase()}`)} onClick={() => setConfirm({ id: item.id, action })}>{action}</button>)}</td></tr>)}</tbody></table></div> : <Empty text="No hay importaciones pendientes para los filtros seleccionados." />)}{confirm && <div className="modal-backdrop"><section className="modal confirm-dialog"><h2>{actionLabel} importación</h2><p>¿Confirma la acción seleccionada sobre esta importación?</p><div className="action-group"><button className="secondary" onClick={() => setConfirm(null)}>Cancelar</button><button className="primary" onClick={() => void execute()}>Confirmar</button></div></section></div>}</section>
+}
+
+function Roles({ token, onError }: { token: string; onError: (message: string) => void }) {
+  const [roles, setRoles] = useState<Role[] | null>(null)
+  const [catalog, setCatalog] = useState<Permission[]>([])
+  const [catalogError, setCatalogError] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [editor, setEditor] = useState<{ mode: 'create' } | { mode: 'edit'; role: Role } | null>(null)
+  const [deleting, setDeleting] = useState<Role | null>(null)
+  const load = useCallback(async () => {
+    setLoading(true); onError('')
+    try { setRoles(await api<Role[]>(token, '/api/v1/roles')) } catch (exception) { onError(message(exception)) } finally { setLoading(false) }
+  }, [token, onError])
+  useEffect(() => { void load() }, [load])
+  useEffect(() => {
+    let active = true
+    api<Permission[]>(token, '/api/v1/permisos')
+      .then(items => { if (active) setCatalog(items) })
+      .catch((exception: unknown) => { if (active) setCatalogError(message(exception)) })
+    return () => { active = false }
+  }, [token])
+  async function openEdit(id: number) {
+    onError('')
+    try { setEditor({ mode: 'edit', role: await api<Role>(token, `/api/v1/roles/${id}`) }) } catch (exception) { onError(message(exception)) }
+  }
+  async function save(payload: RolePayload) {
+    if (!editor) return
+    setSaving(true); onError('')
+    try {
+      if (editor.mode === 'edit') await api<Role>(token, `/api/v1/roles/${editor.role.id}`, { method: 'PUT', body: JSON.stringify(payload) })
+      else await api<Role>(token, '/api/v1/roles', { method: 'POST', body: JSON.stringify(payload) })
+      setEditor(null); await load()
+    } catch (exception) { onError(message(exception)) } finally { setSaving(false) }
+  }
+  async function remove() {
+    if (!deleting) return
+    setSaving(true); onError('')
+    try { await api(token, `/api/v1/roles/${deleting.id}`, { method: 'DELETE' }); setDeleting(null); await load() } catch (exception) { onError(message(exception)) } finally { setSaving(false) }
+  }
+  return <div className="stack">
+    <section className="card table-card"><div className="card-heading"><div><h2>Roles</h2><p>Administre los roles globales y de organización junto con sus permisos.</p></div><div className="action-group"><button className="secondary" disabled={loading} onClick={() => void load()}>{loading ? 'Cargando…' : 'Recargar'}</button><button className="primary" onClick={() => setEditor({ mode: 'create' })}>Nuevo rol</button></div></div>
+      {loading && !roles && <Empty text="Cargando roles…" />}
+      {roles && (roles.length ? <div className="scroll-table"><table><thead><tr><th>Nombre</th><th>Descripción</th><th>Ámbito</th><th>Permisos</th><th>Acciones</th></tr></thead><tbody>{roles.map(role => <tr key={role.id}><td>{role.nombre}</td><td>{role.descripcion || '—'}</td><td>{role.globalRole ? 'Global' : 'Organización'}</td><td><div className="permission-list">{role.permisos?.length ? role.permisos.map(permission => <span className="permission-badge" key={permission}>{permission}</span>) : <span className="muted">Sin permisos</span>}</div></td><td><div className="row-actions"><button className="link-button" onClick={() => void openEdit(role.id)}>Editar</button><button className="link-button" onClick={() => setDeleting(role)}>Eliminar</button></div></td></tr>)}</tbody></table></div> : <Empty text="No hay roles registrados." />)}
+    </section>
+    {editor && <RoleEditor role={editor.mode === 'edit' ? editor.role : undefined} catalog={catalog} catalogError={catalogError} saving={saving} onCancel={() => setEditor(null)} onSave={save} />}
+    {deleting && <div className="modal-backdrop"><section className="modal confirm-dialog"><h2>Eliminar rol</h2><p>¿Confirma la eliminación del rol <strong>{deleting.nombre}</strong>? Esta acción no puede deshacerse.</p><div className="action-group"><button className="secondary" onClick={() => setDeleting(null)}>Cancelar</button><button className="danger-button" disabled={saving} onClick={() => void remove()}>{saving ? 'Eliminando…' : 'Eliminar'}</button></div></section></div>}
+  </div>
+}
+
+function RoleEditor({ role, catalog, catalogError, saving, onCancel, onSave }: { role?: Role; catalog: Permission[]; catalogError: string; saving: boolean; onCancel: () => void; onSave: (payload: RolePayload) => Promise<void> }) {
+  const [form, setForm] = useState<RoleForm>(() => roleForm(role))
+  const [validationError, setValidationError] = useState('')
+  const selected = new Set(form.permisos.split(',').map(value => value.trim()).filter(Boolean))
+  const available = [...new Set([...catalog.map(item => item.codigo), ...(role?.permisos ?? [])])].sort()
+  function update<K extends keyof RoleForm>(key: K, value: RoleForm[K]) { setForm(current => ({ ...current, [key]: value })) }
+  function togglePermission(codigo: string, checked: boolean) {
+    setForm(current => {
+      const permissions = new Set(current.permisos.split(',').map(value => value.trim()).filter(Boolean))
+      if (checked) permissions.add(codigo)
+      else permissions.delete(codigo)
+      return { ...current, permisos: [...permissions].join(', ') }
+    })
+  }
+  function submit(event: FormEvent) {
+    event.preventDefault(); setValidationError('')
+    const payload = rolePayload(form)
+    if (typeof payload === 'string') return setValidationError(payload)
+    void onSave(payload)
+  }
+  return <div className="modal-backdrop"><form className="modal" onSubmit={submit}><div className="card-heading"><div><h2>{role ? 'Editar rol' : 'Nuevo rol'}</h2><p>{role ? `Modifique los datos de ${role.nombre}.` : 'Complete los datos del nuevo rol.'}</p></div><button className="close" type="button" onClick={onCancel}>×</button></div>
+    {validationError && <div className="alert error">{validationError}</div>}
+    <div className="form-grid">
+      <label>Nombre<input value={form.nombre} maxLength={100} onChange={(event) => update('nombre', event.target.value)} required /></label>
+      <label>Descripción<input value={form.descripcion} maxLength={255} onChange={(event) => update('descripcion', event.target.value)} /></label>
+      <label className="check-label">Rol global<input type="checkbox" checked={form.globalRole} onChange={(event) => update('globalRole', event.target.checked)} /></label>
+    </div>
+    <fieldset className="permission-field"><legend>Permisos</legend>
+      {catalogError && <div className="alert error"><span>No se pudo cargar el catálogo de permisos: {catalogError}</span></div>}
+      {available.length ? <div className="permission-selector">{available.map(codigo => <label className="check-label" key={codigo}><input type="checkbox" checked={selected.has(codigo)} onChange={(event) => togglePermission(codigo, event.target.checked)} />{codigo}</label>)}</div> : <p className="muted">No hay permisos disponibles en el catálogo.</p>}
+    </fieldset>
+    <div className="action-group"><button className="secondary" type="button" onClick={onCancel}>Cancelar</button><button className="primary" disabled={saving}>{saving ? 'Guardando…' : 'Guardar rol'}</button></div>
+  </form></div>
+}
+
+function roleForm(role?: Role): RoleForm {
+  return { nombre: role?.nombre ?? '', descripcion: role?.descripcion ?? '', globalRole: role?.globalRole ?? false, permisos: (role?.permisos ?? []).join(', ') }
+}
+function rolePayload(form: RoleForm): RolePayload | string {
+  const nombre = form.nombre.trim()
+  if (!nombre || nombre.length > 100) return 'El nombre es obligatorio y debe tener hasta 100 caracteres.'
+  const descripcion = form.descripcion.trim()
+  if (descripcion.length > 255) return 'La descripción debe tener hasta 255 caracteres.'
+  const permisos = [...new Set(form.permisos.split(',').map(value => value.trim()).filter(Boolean))]
+  return { nombre, descripcion: descripcion || undefined, globalRole: form.globalRole, permisos }
+}
+
+function AdminOrganizations({ token, onError }: { token: string; onError: (message: string) => void }) {
+  const [organizations, setOrganizations] = useState<AdminOrganization[] | null>(null)
+  const [query, setQuery] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [formError, setFormError] = useState('')
+  const [deleteError, setDeleteError] = useState('')
+  const [editor, setEditor] = useState<{ mode: 'create' } | { mode: 'edit'; organization: AdminOrganization } | null>(null)
+  const [deleting, setDeleting] = useState<AdminOrganization | null>(null)
+  const load = useCallback(async () => {
+    setLoading(true); onError('')
+    try { setOrganizations(await api<AdminOrganization[]>(token, '/api/v1/admin/organizaciones')) } catch (exception) { onError(message(exception)) } finally { setLoading(false) }
+  }, [token, onError])
+  useEffect(() => { void load() }, [load])
+  const term = query.trim().toLowerCase()
+  const visible = (organizations ?? []).filter(organization => !term || [organization.nombre, organization.udeo, organization.descripcion].some(value => (value ?? '').toLowerCase().includes(term)))
+  async function openEdit(id: number) {
+    onError(''); setFormError('')
+    try { setEditor({ mode: 'edit', organization: await api<AdminOrganization>(token, `/api/v1/admin/organizaciones/${id}`) }) } catch (exception) { onError(message(exception)) }
+  }
+  async function save(payload: OrganizationPayload) {
+    if (!editor) return
+    setSaving(true); setFormError('')
+    try {
+      if (editor.mode === 'edit') await api<AdminOrganization>(token, `/api/v1/admin/organizaciones/${editor.organization.id}`, { method: 'PUT', body: JSON.stringify(payload) })
+      else await api<AdminOrganization>(token, '/api/v1/admin/organizaciones', { method: 'POST', body: JSON.stringify(payload) })
+      setEditor(null); await load()
+    } catch (exception) { setFormError(message(exception)) } finally { setSaving(false) }
+  }
+  async function remove() {
+    if (!deleting) return
+    setSaving(true); setDeleteError('')
+    try { await api(token, `/api/v1/admin/organizaciones/${deleting.id}`, { method: 'DELETE' }); setDeleting(null); await load() } catch (exception) { setDeleteError(message(exception)) } finally { setSaving(false) }
+  }
+  return <div className="stack">
+    <section className="card filter-card"><form onSubmit={(event) => event.preventDefault()}><label>Buscar<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Nombre, UDEO o descripción" /></label></form></section>
+    <section className="card table-card"><div className="card-heading"><div><h2>Organizaciones</h2><p>Administre las organizaciones disponibles en el sistema.</p></div><div className="action-group"><button className="secondary" disabled={loading} onClick={() => void load()}>{loading ? 'Cargando…' : 'Recargar'}</button><button className="primary" onClick={() => { setFormError(''); setEditor({ mode: 'create' }) }}>Nueva organización</button></div></div>
+      {loading && !organizations && <Empty text="Cargando organizaciones…" />}
+      {organizations && (visible.length ? <div className="scroll-table"><table><thead><tr><th>Nombre</th><th>UDEO</th><th>Descripción</th><th>Acciones</th></tr></thead><tbody>{visible.map(organization => <tr key={organization.id}><td>{organization.nombre}</td><td>{organization.udeo || '—'}</td><td>{organization.descripcion || '—'}</td><td><div className="row-actions"><button className="link-button" onClick={() => void openEdit(organization.id)}>Editar</button><button className="link-button" onClick={() => { setDeleteError(''); setDeleting(organization) }}>Eliminar</button></div></td></tr>)}</tbody></table></div> : <Empty text={term ? 'No hay organizaciones que coincidan con la búsqueda.' : 'No hay organizaciones registradas.'} />)}
+    </section>
+    {editor && <OrganizationEditor organization={editor.mode === 'edit' ? editor.organization : undefined} saving={saving} error={formError} onCancel={() => setEditor(null)} onSave={save} />}
+    {deleting && <div className="modal-backdrop"><section className="modal confirm-dialog"><h2>Eliminar organización</h2><p>¿Confirma la eliminación de <strong>{deleting.nombre}</strong>? Esta acción no puede deshacerse.</p>{deleteError && <div className="alert error">{deleteError}</div>}<div className="action-group"><button className="secondary" onClick={() => setDeleting(null)}>Cancelar</button><button className="danger-button" disabled={saving} onClick={() => void remove()}>{saving ? 'Eliminando…' : 'Eliminar'}</button></div></section></div>}
+  </div>
+}
+
+function OrganizationEditor({ organization, saving, error, onCancel, onSave }: { organization?: AdminOrganization; saving: boolean; error: string; onCancel: () => void; onSave: (payload: OrganizationPayload) => Promise<void> }) {
+  const [form, setForm] = useState<OrganizationForm>(() => organizationForm(organization))
+  const [validationError, setValidationError] = useState('')
+  function update<K extends keyof OrganizationForm>(key: K, value: OrganizationForm[K]) { setForm(current => ({ ...current, [key]: value })) }
+  function submit(event: FormEvent) {
+    event.preventDefault(); setValidationError('')
+    const payload = organizationPayload(form)
+    if (typeof payload === 'string') return setValidationError(payload)
+    void onSave(payload)
+  }
+  return <div className="modal-backdrop"><form className="modal" onSubmit={submit}><div className="card-heading"><div><h2>{organization ? 'Editar organización' : 'Nueva organización'}</h2><p>{organization ? `Modifique los datos de ${organization.nombre}.` : 'Complete los datos de la nueva organización.'}</p></div><button className="close" type="button" onClick={onCancel}>×</button></div>
+    {(validationError || error) && <div className="alert error">{validationError || error}</div>}
+    <div className="form-grid">
+      <label>Nombre<input value={form.nombre} maxLength={255} onChange={(event) => update('nombre', event.target.value)} required /></label>
+      <label>UDEO<input value={form.udeo} maxLength={255} onChange={(event) => update('udeo', event.target.value)} placeholder="Opcional y único" /></label>
+      <label>Descripción<textarea value={form.descripcion} onChange={(event) => update('descripcion', event.target.value)} /></label>
+    </div>
+    <div className="action-group"><button className="secondary" type="button" onClick={onCancel}>Cancelar</button><button className="primary" disabled={saving}>{saving ? 'Guardando…' : 'Guardar organización'}</button></div>
+  </form></div>
+}
+
+function organizationForm(organization?: AdminOrganization): OrganizationForm {
+  return { nombre: organization?.nombre ?? '', udeo: organization?.udeo ?? '', descripcion: organization?.descripcion ?? '' }
+}
+function organizationPayload(form: OrganizationForm): OrganizationPayload | string {
+  const nombre = form.nombre.trim()
+  if (!nombre || nombre.length > 255) return 'El nombre es obligatorio y debe tener hasta 255 caracteres.'
+  const udeo = form.udeo.trim()
+  if (udeo.length > 255) return 'El UDEO debe tener hasta 255 caracteres.'
+  const descripcion = form.descripcion.trim()
+  return { nombre, udeo: udeo || undefined, descripcion: descripcion || undefined }
 }
 
 function Login({ onAuthenticated }: { onAuthenticated: (token: string) => void }) {
