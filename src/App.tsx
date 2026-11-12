@@ -1,4 +1,6 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react'
+import History from './History'
+import Migration from './Migration'
 import PersonalSurvey from './PersonalSurvey'
 import Permissions, { type Permission } from './Permissions'
 import Users from './Users'
@@ -21,11 +23,6 @@ type ImportDetail = {
 type ImportSummary = {
   id: number; organizacionId: number; organizacionNombre: string; archivoOrigen: string; estado: string
   creadoPorEmail: string; fechaCreacion: string; cantidadFilas: number; cantidadFilasConError: number
-}
-type Replacement = {
-  id: number; organizacionId: number; importacionId: number; reemplazante: string; cuil: string
-  titular: string; instrumentoLegal: string; periodoDesde: string; periodoHasta: string; lugarTrabajo: string
-  fechaCierre: string
 }
 type Organization = { id: number; nombre: string; udeo?: string }
 type AdminOrganization = { id: number; nombre: string; udeo?: string | null; descripcion?: string | null; createdAt?: string }
@@ -114,7 +111,8 @@ function Application({ token, can, onSignOut, error, onError }: { token: string;
   }, [onSignOut])
 
   const currentOrganization = organizations.find(item => String(item.id) === organizationId)
-  const content = routeContent(path, { token, can, onError, navigate })
+  const scope = sessionScope(token, organizations)
+  const content = routeContent(path, { token, can, onError, navigate, organizations, global: scope.global, organizationId: scope.organizationId })
   return <main className={collapsed ? 'app-layout sidebar-collapsed' : 'app-layout'}>
     <Sidebar path={path} collapsed={collapsed} onToggle={() => setCollapsed(value => !value)} onNavigate={navigate} onSignOut={onSignOut} />
     <section className="app-main">
@@ -128,7 +126,7 @@ function Sidebar({ path, collapsed, onToggle, onNavigate, onSignOut }: { path: s
   const groups = [
     { label: 'Dashboard', icon: '▦', path: '/dashboard', children: [] },
     { label: 'Personal', icon: '♟', path: '/personal/legajos', children: [{ label: 'Legajos', path: '/personal/legajos' }] },
-    { label: 'Reemplazos', icon: '↻', path: '/reemplazos', children: [{ label: 'Nueva carga', path: '/reemplazos/nueva-carga' }, { label: 'Importaciones', path: '/reemplazos/importaciones' }, { label: 'Pendientes de revisión', path: '/reemplazos/pendientes' }, { label: 'Histórico', path: '/reemplazos/historico' }] },
+    { label: 'Reemplazos', icon: '↻', path: '/reemplazos', children: [{ label: 'Nueva carga', path: '/reemplazos/nueva-carga' }, { label: 'Importaciones', path: '/reemplazos/importaciones' }, { label: 'Pendientes de revisión', path: '/reemplazos/pendientes' }, { label: 'Migrar histórico', path: '/reemplazos/migrar-historico' }, { label: 'Histórico', path: '/reemplazos/historico' }] },
     { label: 'Administración', icon: '⚙', path: '/administracion', children: ['Usuarios', 'Roles y permisos', 'Permisos', 'Organizaciones', 'Dependencias', 'Sectores', 'Categorías', 'Agrupamientos', 'Tipos de licencia'].map(label => ({ label, path: `/administracion/${slug(label)}` })) },
     { label: 'Auditoría', icon: '⌕', path: '/auditoria/relevamiento', children: [{ label: 'Relevamiento de personal', path: '/auditoria/relevamiento' }, { label: 'Importaciones', path: '/auditoria/importaciones' }, { label: 'Validación de datos', path: '/auditoria/validacion' }, { label: 'Diferencias', path: '/auditoria/diferencias' }, { label: 'Historial', path: '/auditoria/historial' }] },
     { label: 'Configuración', icon: '⚙', path: '/configuracion/perfil', children: [{ label: 'Perfil', path: '/configuracion/perfil' }, { label: 'Preferencias', path: '/configuracion/preferencias' }] },
@@ -136,7 +134,7 @@ function Sidebar({ path, collapsed, onToggle, onNavigate, onSignOut }: { path: s
   return <aside className="main-sidebar"><div className="brand"><span className="brand-mark">S</span>{!collapsed && <div><strong>SISGE</strong><small>Gestión de Recursos Humanos</small></div>}<button className="collapse-button" onClick={onToggle} aria-label="Contraer menú">{collapsed ? '›' : '‹'}</button></div><nav>{groups.map(group => <div className="nav-group" key={group.label}><button className={path === group.path || path.startsWith(`${group.path}/`) || group.children.some(item => path === item.path) ? 'nav-button active' : 'nav-button'} onClick={() => onNavigate(group.children[0]?.path ?? group.path)}><span className="nav-icon">{group.icon}</span>{!collapsed && group.label}</button>{!collapsed && group.children.map(item => <button key={item.path} className={path === item.path || (item.path === '/personal/legajos' && path.startsWith('/personal/legajos/')) ? 'nav-child active' : 'nav-child'} onClick={() => onNavigate(item.path)}>{item.label}</button>)}</div>)}</nav><button className="sign-out" onClick={onSignOut}><span>↪</span>{!collapsed && 'Cerrar sesión'}</button></aside>
 }
 
-type RouteContext = { token: string; can: (permission: string) => boolean; onError: (message: string) => void; navigate: (path: string) => void }
+type RouteContext = { token: string; can: (permission: string) => boolean; onError: (message: string) => void; navigate: (path: string) => void; organizations: Organization[]; global: boolean; organizationId: string }
 function routeContent(path: string, context: RouteContext) {
   if (path === '/dashboard') return <Dashboard onNavigate={context.navigate} />
   if (path === '/personal' || path === '/personal/legajos') return <Personal token={context.token} can={context.can} onError={context.onError} allowImport={false} onOpenLegajo={id => context.navigate(`/personal/legajos/${id}`)} />
@@ -146,7 +144,8 @@ function routeContent(path: string, context: RouteContext) {
   if (path === '/reemplazos/importaciones') return <Imports token={context.token} onError={context.onError} />
   if (path.startsWith('/reemplazos/importaciones/')) return <ReplacementDetail token={context.token} importId={path.split('/').pop() ?? ''} onError={context.onError} />
   if (path === '/reemplazos/pendientes') return <AdminImports token={context.token} can={context.can} onError={context.onError} />
-  if (path === '/reemplazos/historico') return <History token={context.token} onError={context.onError} />
+  if (path === '/reemplazos/migrar-historico') return <Migration token={context.token} can={context.can} request={api} />
+  if (path === '/reemplazos/historico') return <History token={context.token} can={context.can} request={api} onError={context.onError} organizations={context.organizations} global={context.global} organizationId={context.organizationId} />
   if (path === '/auditoria/relevamiento') return <AuditOverview />
   if (path === '/auditoria/importaciones') return <PersonalSurvey token={context.token} can={context.can} request={api} onError={context.onError} />
   if (path.startsWith('/auditoria/importaciones/')) return <PersonalSurvey token={context.token} can={context.can} request={api} importId={path.split('/').pop()} onError={context.onError} />
@@ -163,13 +162,13 @@ function routeContent(path: string, context: RouteContext) {
 }
 
 function PageHeader({ path }: { path: string }) {
-  const pages: Record<string, [string, string]> = { '/dashboard': ['Dashboard', 'Resumen de la gestión de Recursos Humanos'], '/personal/legajos': ['Legajos', 'Consulta y gestión de la información del personal.'], '/reemplazos': ['Reemplazos', 'Gestión y seguimiento de reemplazantes.'], '/reemplazos/nueva-carga': ['Nueva carga de reemplazos', 'Importe el archivo Excel con la información de reemplazantes.'], '/reemplazos/importaciones': ['Importaciones de reemplazos', 'Consulte el estado y detalle de cada carga.'], '/reemplazos/pendientes': ['Pendientes de revisión', 'Gestione las importaciones pendientes de control.'], '/reemplazos/historico': ['Histórico de reemplazos', 'Consulta de registros consolidados.'], '/auditoria/relevamiento': ['Relevamiento de personal', 'Controlá que la información del personal se encuentre completa y actualizada.'], '/auditoria/importaciones': ['Importar personal', 'Importá información del personal para iniciar un nuevo relevamiento.'], '/administracion/usuarios': ['Usuarios', 'Alta de usuarios por organización.'], '/administracion/roles-y-permisos': ['Roles y permisos', 'Alta, edición y baja de roles y sus permisos.'], '/administracion/permisos': ['Permisos', 'Alta, edición y baja de permisos.'], '/administracion/organizaciones': ['Organizaciones', 'Alta, edición y baja de organizaciones.'] }
+  const pages: Record<string, [string, string]> = { '/dashboard': ['Dashboard', 'Resumen de la gestión de Recursos Humanos'], '/personal/legajos': ['Legajos', 'Consulta y gestión de la información del personal.'], '/reemplazos': ['Reemplazos', 'Gestión y seguimiento de reemplazantes.'], '/reemplazos/nueva-carga': ['Nueva carga de reemplazos', 'Importe el archivo Excel con la información de reemplazantes.'], '/reemplazos/importaciones': ['Importaciones de reemplazos', 'Consulte el estado y detalle de cada carga.'], '/reemplazos/pendientes': ['Pendientes de revisión', 'Gestione las importaciones pendientes de control.'], '/reemplazos/migrar-historico': ['Migrar histórico', 'Importe el histórico consolidado y asocie las importaciones a una organización.'], '/reemplazos/historico': ['Histórico de reemplazos', 'Consulta de registros consolidados.'], '/auditoria/relevamiento': ['Relevamiento de personal', 'Controlá que la información del personal se encuentre completa y actualizada.'], '/auditoria/importaciones': ['Importar personal', 'Importá información del personal para iniciar un nuevo relevamiento.'], '/administracion/usuarios': ['Usuarios', 'Alta de usuarios por organización.'], '/administracion/roles-y-permisos': ['Roles y permisos', 'Alta, edición y baja de roles y sus permisos.'], '/administracion/permisos': ['Permisos', 'Alta, edición y baja de permisos.'], '/administracion/organizaciones': ['Organizaciones', 'Alta, edición y baja de organizaciones.'] }
   const current = pages[path] ?? (path.startsWith('/personal/legajos/') ? ['Legajo', 'Información consolidada del personal.'] : undefined)
   return current ? <div className="page-header"><div><p className="eyebrow">{path.startsWith('/auditoria') ? 'AUDITORÍA' : path.startsWith('/reemplazos') ? 'REEMPLAZOS' : path.startsWith('/personal') ? 'PERSONAL' : 'SISGE'}</p><h1>{current[0]}</h1><p>{current[1]}</p></div></div> : null
 }
-function Breadcrumb({ path }: { path: string }) { const labels = path.split('/').filter(Boolean).map(part => ({ dashboard: 'Dashboard', personal: 'Personal', legajos: 'Legajos', reemplazos: 'Reemplazos', auditoria: 'Auditoría', administracion: 'Administración', configuracion: 'Configuración', 'nueva-carga': 'Nueva carga', importaciones: 'Importaciones', pendientes: 'Pendientes', historico: 'Histórico', relevamiento: 'Relevamiento', validacion: 'Validación', diferencias: 'Diferencias', historial: 'Historial', usuarios: 'Usuarios', 'roles-y-permisos': 'Roles y permisos', permisos: 'Permisos', organizaciones: 'Organizaciones', perfil: 'Perfil', preferencias: 'Preferencias' }[part] ?? part)); return <div className="breadcrumbs">{labels.join(' › ')}</div> }
+function Breadcrumb({ path }: { path: string }) { const labels = path.split('/').filter(Boolean).map(part => ({ dashboard: 'Dashboard', personal: 'Personal', legajos: 'Legajos', reemplazos: 'Reemplazos', auditoria: 'Auditoría', administracion: 'Administración', configuracion: 'Configuración', 'nueva-carga': 'Nueva carga', importaciones: 'Importaciones', pendientes: 'Pendientes', historico: 'Histórico', 'migrar-historico': 'Migrar histórico', relevamiento: 'Relevamiento', validacion: 'Validación', diferencias: 'Diferencias', historial: 'Historial', usuarios: 'Usuarios', 'roles-y-permisos': 'Roles y permisos', permisos: 'Permisos', organizaciones: 'Organizaciones', perfil: 'Perfil', preferencias: 'Preferencias' }[part] ?? part)); return <div className="breadcrumbs">{labels.join(' › ')}</div> }
 function Dashboard({ onNavigate }: { onNavigate: (path: string) => void }) { return <div className="stack"><section className="dashboard-stats">{[['Personal', 'Sin información disponible', '/personal/legajos'], ['Reemplazos', 'Sin información disponible', '/reemplazos'], ['Importaciones pendientes', 'Sin información disponible', '/reemplazos/pendientes'], ['Relevamientos', 'Sin información disponible', '/auditoria/relevamiento']].map(([label, value, path]) => <button className="stat-card" key={label} onClick={() => onNavigate(path)}><span>{label}</span><strong>{value}</strong></button>)}</section><section className="dashboard-grid"><PendingFeature title="Personal por organización" text="Sin información disponible." /><PendingFeature title="Personal por categoría" text="Sin información disponible." /><PendingFeature title="Personal por sector" text="Sin información disponible." /><PendingFeature title="Actividad reciente" text="Sin información disponible." /></section></div> }
-function ReplacementsHome({ onNavigate }: { onNavigate: (path: string) => void }) { return <section className="quick-actions">{[['Nueva carga', 'Importe y valide un archivo Excel.', '/reemplazos/nueva-carga'], ['Importaciones', 'Consulte las cargas realizadas.', '/reemplazos/importaciones'], ['Pendientes de revisión', 'Revise importaciones pendientes.', '/reemplazos/pendientes'], ['Histórico', 'Consulte reemplazos consolidados.', '/reemplazos/historico']].map(([title, description, path]) => <button className="card quick-action" key={title} onClick={() => onNavigate(path)}><h2>{title}</h2><p>{description}</p><span>Ver sección →</span></button>)}</section> }
+function ReplacementsHome({ onNavigate }: { onNavigate: (path: string) => void }) { return <section className="quick-actions">{[['Nueva carga', 'Importe y valide un archivo Excel.', '/reemplazos/nueva-carga'], ['Importaciones', 'Consulte las cargas realizadas.', '/reemplazos/importaciones'], ['Pendientes de revisión', 'Revise importaciones pendientes.', '/reemplazos/pendientes'], ['Migrar histórico', 'Importe el histórico consolidado y asocie organizaciones.', '/reemplazos/migrar-historico'], ['Histórico', 'Consulte reemplazos consolidados.', '/reemplazos/historico']].map(([title, description, path]) => <button className="card quick-action" key={title} onClick={() => onNavigate(path)}><h2>{title}</h2><p>{description}</p><span>Ver sección →</span></button>)}</section> }
 function AuditOverview() { return <section className="dashboard-stats">{['Personal relevado', 'Información completa', 'Información incompleta', 'Con inconsistencias', 'Pendientes de revisión'].map(label => <div className="stat-card" key={label}><span>{label}</span><strong>Sin información disponible</strong></div>)}</section> }
 function PendingFeature({ title, text }: { title: string; text: string }) { return <section className="card pending-feature"><h2>{title}</h2><p>{text}</p></section> }
 function Settings({ path }: { path: string }) { return <section className="card pending-feature"><h2>{path.endsWith('perfil') ? 'Perfil' : 'Preferencias'}</h2><p>La configuración de cuenta estará disponible próximamente.</p></section> }
@@ -492,21 +491,6 @@ function RowEditor({ row, token, importId, onClose, onSaved, onError }: { row: I
   return <div className="modal-backdrop"><form className="modal" onSubmit={save}><div className="card-heading"><h2>Editar fila {row.filaOrigen}</h2><button className="close" type="button" onClick={onClose}>×</button></div><div className="form-grid">{Object.entries(form).map(([key, value]) => <label key={key}>{label(key)}{key === 'observaciones' ? <textarea value={value} onChange={(event) => setForm({ ...form, [key]: event.target.value })} /> : <input value={value} onChange={(event) => setForm({ ...form, [key]: event.target.value })} />}</label>)}</div><button className="primary">Guardar cambios</button></form></div>
 }
 
-function History({ token, onError }: { token: string; onError: (error: string) => void }) {
-  const [filters, setFilters] = useState({ organizacionId: '', cuil: '', reemplazante: '', titular: '' })
-  const [rows, setRows] = useState<Page<Replacement> | null>(null)
-  const [loading, setLoading] = useState(false)
-  async function search(event: FormEvent) {
-    event.preventDefault(); setLoading(true); onError('')
-    const params = new URLSearchParams({ size: '50' })
-    Object.entries(filters).forEach(([key, value]) => { if (value) params.set(key, value) })
-    try { setRows(await api<Page<Replacement>>(token, `/api/v1/reemplazantes?${params}`)) } catch (exception) { onError(message(exception)) } finally { setLoading(false) }
-  }
-  return <div className="stack"><section className="card filter-card"><form className="history-filters" onSubmit={search}>{Object.entries(filters).map(([key, value]) => <label key={key}>{label(key)}<input type={key === 'organizacionId' ? 'number' : 'text'} min="1" value={value} onChange={(event) => setFilters({ ...filters, [key]: event.target.value })} /></label>)}<button className="primary" disabled={loading}>{loading ? 'Buscando…' : 'Buscar'}</button></form></section>
-    {rows && <section className="card table-card"><h2>Registros consolidados <span className="muted">({rows.totalElements})</span></h2><div className="scroll-table"><table><thead><tr><th>Reemplazante</th><th>CUIL</th><th>Titular</th><th>Instrumento</th><th>Período</th><th>Cierre</th></tr></thead><tbody>{rows.content.map((row) => <tr key={row.id}><td>{row.reemplazante}</td><td>{row.cuil}</td><td>{row.titular}</td><td>{row.instrumentoLegal}</td><td>{row.periodoDesde} — {row.periodoHasta}</td><td>{formatDate(row.fechaCierre)}</td></tr>)}</tbody></table></div>{rows.content.length === 0 && <Empty text="No hay registros históricos para los filtros seleccionados." />}</section>}
-  </div>
-}
-
 export function Personal({ token, can, onError, allowImport = false, onOpenLegajo }: { token: string; can: (permission: string) => boolean; onError: (error: string) => void; allowImport?: boolean; onOpenLegajo?: (id: number) => void }) {
   const [filters, setFilters] = useState({ organizacionId: '', q: '' })
   const [organizations, setOrganizations] = useState<Organization[]>([])
@@ -664,6 +648,42 @@ function dateInput(value: string) {
 }
 function digits(value: string) { return value.replace(/\D/g, '') }
 function formatDni(value?: string | null) { const result = digits(value ?? ''); return result ? new Intl.NumberFormat('es-AR').format(Number(result)) : '—' }
+type SessionScope = { global: boolean; organizationId: string }
+function tokenPayload(token: string): Record<string, unknown> {
+  try {
+    const encoded = token.split('.')[1]
+    if (!encoded) return {}
+    const value: unknown = JSON.parse(atob(encoded.replace(/-/g, '+').replace(/_/g, '/')))
+    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+  } catch { return {} }
+}
+function organizationValue(value: unknown): string {
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value)
+  if (typeof value === 'string' && value.trim()) return value.trim()
+  if (value && typeof value === 'object' && !Array.isArray(value)) return organizationValue((value as Record<string, unknown>).id)
+  return ''
+}
+function globalValue(value: unknown): boolean | undefined {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase()
+    if (['true', '1', 'global'].includes(normalized)) return true
+    if (['false', '0', 'organizacion', 'organization'].includes(normalized)) return false
+  }
+  return undefined
+}
+function sessionScope(token: string, organizations: Organization[]): SessionScope {
+  const payload = tokenPayload(token)
+  const organizationId = organizationValue(payload.organizacionId ?? payload.organizationId ?? payload.organizacion ?? payload.organization ?? payload.orgId)
+  const role = payload.rolGlobal ?? payload.globalRole
+  const global = globalValue(payload.global ?? payload.esGlobal) ?? globalValue(role)
+    ?? (role && typeof role === 'object' ? globalValue((role as Record<string, unknown>).globalRole) : undefined)
+  if (global === true) return { global: true, organizationId: '' }
+  if (global === false) return { global: false, organizationId }
+  if (organizationId) return { global: false, organizationId }
+  if (organizations.length === 1) return { global: false, organizationId: String(organizations[0].id) }
+  return { global: true, organizationId: '' }
+}
 function permissionsFromToken(token: string): string[] {
   try {
     const encoded = token.split('.')[1]; if (!encoded) return []

@@ -22,7 +22,7 @@ El shell de la aplicación está compuesto por `Application`, `Sidebar`, `Breadc
 | --- | --- |
 | Dashboard | `/dashboard` |
 | Personal | `/personal`, `/personal/legajos`, `/personal/legajos/:id` |
-| Reemplazos | `/reemplazos`, `/reemplazos/nueva-carga`, `/reemplazos/importaciones`, `/reemplazos/importaciones/:id`, `/reemplazos/pendientes`, `/reemplazos/historico` |
+| Reemplazos | `/reemplazos`, `/reemplazos/nueva-carga`, `/reemplazos/importaciones`, `/reemplazos/importaciones/:id`, `/reemplazos/pendientes`, `/reemplazos/migrar-historico`, `/reemplazos/historico` |
 | Auditoría | `/auditoria/relevamiento`, `/auditoria/importaciones`, `/auditoria/importaciones/:id`, `/auditoria/validacion`, `/auditoria/diferencias`, `/auditoria/historial` |
 | Administración | `/administracion/*` |
 | Configuración | `/configuracion/perfil`, `/configuracion/preferencias` |
@@ -39,7 +39,8 @@ El shell de la aplicación está compuesto por `Application`, `Sidebar`, `Breadc
 | Carga de reemplazos | `POST /api/v1/organizaciones/{organizacionId}/importaciones/upload` |
 | Reemplazos | `GET /api/v1/importaciones`, `GET /api/v1/importaciones/{id}`, `PUT /api/v1/importaciones/{id}/reemplazantes/{registroId}`, `POST /api/v1/importaciones/{id}/enviar-revision` |
 | Revisión de reemplazos | `GET /api/v1/admin/importaciones`, `POST /api/v1/admin/importaciones/{id}/observar`, `/rechazar`, `/aprobar`, `/cerrar` |
-| Histórico | `GET /api/v1/reemplazantes` |
+| Migración de histórico | `POST /api/v1/admin/importaciones/migrar-historico-consolidado`, `PUT /api/v1/admin/importaciones/{id}/organizacion` |
+| Histórico | `GET /api/v1/reemplazantes` con filtros opcionales `organizacionId`, `importacionId`, `reemplazante`, `titular`, `cuil`, `dni`, `hospital`, `udeo`, `lugarTrabajo`, `fechaCarga`, `page` y `size` |
 | Auditoría | `POST /api/v1/organizaciones/{organizacionId}/personal/importaciones`, `GET /api/v1/personal/importaciones/{id}`, `PUT /api/v1/personal/importaciones/{importacionId}/filas/{filaId}`, `POST /api/v1/personal/importaciones/{id}/aprobar` |
 | Usuarios | `POST /api/v1/organizaciones/{organizacionId}/usuarios`, `GET /api/v1/organizaciones/{organizacionId}/usuarios`, `GET /api/v1/organizaciones/{organizacionId}/usuarios/{usuarioId}`, `PUT /api/v1/organizaciones/{organizacionId}/usuarios/{usuarioId}/rol`, `GET /api/v1/admin/usuarios`, `GET /api/v1/admin/usuarios/{usuarioId}`, `PUT /api/v1/admin/usuarios/{usuarioId}/rol-global` |
 | Roles | `GET /api/v1/roles`, `GET /api/v1/roles/{id}`, `POST /api/v1/roles`, `PUT /api/v1/roles/{id}`, `DELETE /api/v1/roles/{id}` |
@@ -51,6 +52,8 @@ El shell de la aplicación está compuesto por `Application`, `Sidebar`, `Breadc
 - Dashboard y tarjetas de gestión sin métricas inventadas.
 - Detalle de legajo y pestañas visibles sin datos simulados.
 - Alta de usuarios por organización y edición de rol de membresía/rol global en `/administracion/usuarios`, ABM de roles y permisos en `/administracion/roles-y-permisos`, ABM del catálogo de permisos en `/administracion/permisos` (requiere `PERMISOS_GESTIONAR`) y ABM de organizaciones en `/administracion/organizaciones` (requiere `ORGANIZACIONES_GESTIONAR`); el selector de permisos del formulario de roles se carga desde `GET /api/v1/permisos`. El resto de Administración, configuración, validación, diferencias e historial de auditoría mantiene estado explícito de dependencia de backend.
+- Histórico de reemplazantes en `/reemplazos/historico` con filtros por organización, reemplazante, DNI, CUIL, titular, hospital, UDEO, importación y fecha de carga, paginación del lado del servidor y estados de error 400/403/500. Los usuarios globales pueden consultar todas las organizaciones; los usuarios de hospital quedan fijados a la organización de la sesión.
+- Migración de histórico consolidado en `/reemplazos/migrar-historico`; las importaciones sin organización muestran la acción “Asociar organización”, que permite elegir una organización y ejecutar `PUT /api/v1/admin/importaciones/{id}/organizacion` conservando Hospital y UDEO originales.
 - Selector de organización por nombre; el ID se usa solo internamente.
 
 ## Endpoints necesarios para completar las vistas
