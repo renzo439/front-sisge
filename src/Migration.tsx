@@ -17,6 +17,19 @@ type MigrationSummary = {
   cantidadFilasConError: number
 }
 
+type MigrationRowError = { fila: number; errores: string[] }
+
+function rowErrors(error: unknown): MigrationRowError[] {
+  if (!(error instanceof ApiError) || !Array.isArray(error.details)) return []
+  return (error.details as unknown[]).flatMap(item => {
+    if (!item || typeof item !== 'object') return []
+    const detail = item as { fila?: unknown; errores?: unknown }
+    if (typeof detail.fila !== 'number' || !Array.isArray(detail.errores)) return []
+    const errores = detail.errores.filter((value): value is string => typeof value === 'string' && value.length > 0)
+    return errores.length ? [{ fila: detail.fila, errores }] : []
+  })
+}
+
 function migrationError(error: unknown) {
   if (error instanceof ApiError) {
     if (error.status === 403) return 'No tenés permiso para migrar el histórico de reemplazantes.'
@@ -75,6 +88,7 @@ function MigrationManager({ token, request }: { token: string; request: Request 
   const [results, setResults] = useState<MigrationSummary[] | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [errorDetails, setErrorDetails] = useState<MigrationRowError[]>([])
   const [toast, setToast] = useState('')
   const [associating, setAssociating] = useState<MigrationSummary | null>(null)
   const [organizations, setOrganizations] = useState<Organization[]>([])
@@ -95,7 +109,7 @@ function MigrationManager({ token, request }: { token: string; request: Request 
       setError('Seleccioná un archivo .xlsx para migrar.')
       return
     }
-    setLoading(true); setError(''); setToast('')
+    setLoading(true); setError(''); setErrorDetails([]); setToast('')
     try {
       const form = new FormData()
       form.append('file', file)
@@ -104,6 +118,7 @@ function MigrationManager({ token, request }: { token: string; request: Request 
       setToast(migrated.length ? `Se migraron ${migrated.length} importaciones históricas.` : 'La migración no generó importaciones.')
     } catch (exception) {
       setError(migrationError(exception))
+      setErrorDetails(rowErrors(exception))
     } finally {
       setLoading(false)
     }
@@ -155,7 +170,15 @@ function MigrationManager({ token, request }: { token: string; request: Request 
         <label className="file-input">Archivo Excel<input type="file" aria-label="Archivo Excel" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(event) => setFile(event.target.files?.[0] ?? null)} /><span>{file ? file.name : 'Seleccionar archivo .xlsx'}</span></label>
         <button className="primary" disabled={loading}>{loading ? <><span className="spinner" />Migrando…</> : 'Migrar archivo'}</button>
       </form>
-      {error && <div className="alert error"><span>{error}</span></div>}
+      {error && <div className="alert error">
+        <div>
+          <span>{error}</span>
+          {errorDetails.length > 0 && <div className="row-error-list">
+            <p>{errorDetails.length === 1 ? 'Fila con errores que bloquean la migración:' : `${errorDetails.length} filas con errores que bloquean la migración:`}</p>
+            <ul>{errorDetails.map((row, index) => <li key={`${row.fila}-${index}`}><strong>Fila {row.fila}</strong>: {row.errores.join(', ')}</li>)}</ul>
+          </div>}
+        </div>
+      </div>}
     </section>
 
     <section className="card table-card">

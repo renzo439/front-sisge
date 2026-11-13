@@ -89,4 +89,19 @@ describe('Migration', () => {
     uploadHistorical(request)
     expect(await screen.findByText('El archivo contiene filas con errores.')).toBeTruthy()
   })
+
+  it('detalla cada fila y sus errores cuando la migración es rechazada', async () => {
+    const details = [
+      { fila: 8, errores: ['periodo:INVALID_RANGE'] },
+      { fila: 11600, errores: ['cuil:INVALID'] },
+    ]
+    const request = vi.fn(async () => { throw new ApiError('Historical importation has blocking row errors', 409, details) }) as unknown as Request
+    uploadHistorical(request)
+    expect(await screen.findByText('Historical importation has blocking row errors')).toBeTruthy()
+    expect(screen.getByText('2 filas con errores que bloquean la migración:')).toBeTruthy()
+    expect(screen.getByText(/Fila 8/)).toBeTruthy()
+    expect(screen.getByText(/periodo:INVALID_RANGE/)).toBeTruthy()
+    expect(screen.getByText(/Fila 11600/)).toBeTruthy()
+    expect(screen.getByText(/cuil:INVALID/)).toBeTruthy()
+  })
 })

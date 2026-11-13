@@ -1,7 +1,7 @@
 export const apiUrl = import.meta.env.VITE_API_URL ?? ''
 
 export class ApiError extends Error {
-  constructor(message: string, public readonly status: number) {
+  constructor(message: string, public readonly status: number, public readonly details?: unknown) {
     super(message)
   }
 }
@@ -18,7 +18,7 @@ export async function api<T = unknown>(token: string, path: string, init: Reques
   const data = await response.json().catch(() => ({}))
   if (!response.ok) {
     if (response.status === 401) window.dispatchEvent(new Event('sisge-session-invalid'))
-    throw new ApiError(data.message ?? 'La solicitud no pudo completarse', response.status)
+    throw new ApiError(data.message ?? 'La solicitud no pudo completarse', response.status, data.details)
   }
   return data as T
 }

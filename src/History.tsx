@@ -27,8 +27,6 @@ const emptyFilters: Filters = {
 }
 
 function formatDate(value?: string | null) { return value ? new Intl.DateTimeFormat('es-AR', { dateStyle: 'medium' }).format(new Date(value)) : '—' }
-function formatDni(value?: string | null) { const digits = (value ?? '').replace(/\D/g, ''); return digits ? new Intl.NumberFormat('es-AR').format(Number(digits)) : '—' }
-function formatMoney(value?: number | null) { return value == null ? '—' : new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 2 }).format(value) }
 function formatPeriod(from?: string | null, to?: string | null) { return !from && !to ? '—' : `${formatDate(from)} — ${formatDate(to)}` }
 function hospital(row: HistoryRow) { return row.hospitalNombre || 'Sin organización' }
 
@@ -120,7 +118,7 @@ function HistoryManager({ token, request, onError, organizations, global, organi
     <section className="card table-card"><div className="card-heading"><div><h2>Histórico de reemplazantes</h2><p>{global ? 'Consulte los reemplazos históricos de todas las organizaciones o filtrá por una.' : `Consulte los reemplazos históricos de ${fixedOrganization?.nombre ?? 'la organización de la sesión'}.`}</p></div>{!global && <span className="muted">Organización: {fixedOrganization?.nombre ?? (fixedOrganizationId ? `#${fixedOrganizationId}` : 'no determinada')}</span>}</div>
       {error && <div className="alert error"><span>{error}</span></div>}
       {loading && <p className="empty">Cargando registros…</p>}
-      {!loading && rows && (rows.content.length ? <div className="scroll-table"><table><thead><tr><th>Reemplazante</th><th>DNI</th><th>CUIL</th><th>Titular</th><th>Hospital</th><th>UDEO</th><th>Período</th><th>A pagar</th><th>A deuda</th><th>Fecha de cierre</th></tr></thead><tbody>{rows.content.map(row => <tr key={row.id}><td>{row.reemplazante || '—'}</td><td>{formatDni(row.dni)}</td><td>{row.cuil || '—'}</td><td>{row.titular || '—'}</td><td>{hospital(row)}</td><td>{row.udeo || '—'}</td><td>{formatPeriod(row.periodoDesde, row.periodoHasta)}</td><td>{formatMoney(row.aPagar)}</td><td>{formatMoney(row.aDeuda)}</td><td>{formatDate(row.fechaCierre)}</td></tr>)}</tbody></table></div> : <p className="empty">No hay registros históricos para los filtros seleccionados.</p>)}
+      {!loading && rows && (rows.content.length ? <div className="scroll-table"><table><thead><tr><th>Reemplazante</th><th>CUIL</th><th>Titular</th><th>Hospital</th><th>UDEO</th><th>Período</th></tr></thead><tbody>{rows.content.map(row => <tr key={row.id}><td>{row.reemplazante || '—'}</td><td>{row.cuil || '—'}</td><td>{row.titular || '—'}</td><td>{hospital(row)}</td><td>{row.udeo || '—'}</td><td>{formatPeriod(row.periodoDesde, row.periodoHasta)}</td></tr>)}</tbody></table></div> : <p className="empty">No hay registros históricos para los filtros seleccionados.</p>)}
       {!loading && !rows && !error && <p className="empty">Aplicá los filtros y presioná Buscar para consultar el histórico.</p>}
       {!loading && rows && rows.totalPages > 1 && <div className="pagination"><button className="secondary" disabled={page <= 0} onClick={() => void loadPage(page - 1)}>Anterior</button><span>Página {page + 1} de {rows.totalPages} · {rows.totalElements} registros</span><button className="secondary" disabled={rows.last} onClick={() => void loadPage(page + 1)}>Siguiente</button></div>}
     </section>
