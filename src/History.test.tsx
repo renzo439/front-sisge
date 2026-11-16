@@ -51,14 +51,29 @@ describe('History', () => {
     renderModule(request, true)
     fireEvent.change(screen.getByLabelText('Reemplazante'), { target: { value: 'Ana' } })
     fireEvent.change(screen.getByLabelText('DNI'), { target: { value: '12.345.678' } })
+    fireEvent.change(screen.getByLabelText('Período reemplazo desde'), { target: { value: '2025-01-01' } })
+    fireEvent.change(screen.getByLabelText('Período reemplazo hasta'), { target: { value: '2025-01-31' } })
     fireEvent.change(screen.getByLabelText('Organización'), { target: { value: '6' } })
     fireEvent.click(screen.getByText('Buscar'))
     await waitFor(() => expect(vi.mocked(request).mock.calls.length).toBe(1))
     const path = vi.mocked(request).mock.calls[0][1]
     expect(path).toContain('organizacionId=6')
     expect(path).toContain('reemplazante=Ana')
-    expect(path).toContain('dni=12.345.678')
+    expect(path).toContain('cuil=12.345.678')
+    expect(path).not.toContain('dni=')
+    expect(path).toContain('periodoDesde=2025-01-01')
+    expect(path).toContain('periodoHasta=2025-01-31')
     expect(path).toContain('page=0')
+  })
+
+  it('oculta filtros removidos y muestra filtro por período de reemplazo', () => {
+    renderModule(vi.fn(async () => page) as unknown as Request, true)
+    expect(screen.queryByLabelText('CUIL')).toBeNull()
+    expect(screen.queryByLabelText('Hospital')).toBeNull()
+    expect(screen.queryByLabelText('Importación')).toBeNull()
+    expect(screen.queryByLabelText('Fecha de carga')).toBeNull()
+    expect(screen.getByLabelText('Período reemplazo desde')).toBeTruthy()
+    expect(screen.getByLabelText('Período reemplazo hasta')).toBeTruthy()
   })
 
   it('pagina los resultados y muestra los estados de error 400, 403 y 500', async () => {

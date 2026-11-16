@@ -18,12 +18,12 @@ type HistoryRow = {
 }
 type Page<T> = { content: T[]; totalElements: number; totalPages: number; number: number; last: boolean }
 
-type FilterKey = 'organizacionId' | 'importacionId' | 'reemplazante' | 'titular' | 'cuil' | 'dni' | 'hospital' | 'udeo' | 'fechaCarga'
+type FilterKey = 'organizacionId' | 'reemplazante' | 'titular' | 'dni' | 'udeo' | 'periodoDesde' | 'periodoHasta'
 type Filters = Record<FilterKey, string>
 
 const PAGE_SIZE = 20
 const emptyFilters: Filters = {
-  organizacionId: '', importacionId: '', reemplazante: '', titular: '', cuil: '', dni: '', hospital: '', udeo: '', fechaCarga: '',
+  organizacionId: '', reemplazante: '', titular: '', dni: '', udeo: '', periodoDesde: '', periodoHasta: '',
 }
 
 function formatDate(value?: string | null) { return value ? new Intl.DateTimeFormat('es-AR', { dateStyle: 'medium' }).format(new Date(value)) : '—' }
@@ -78,11 +78,12 @@ function HistoryManager({ token, request, onError, organizations, global, organi
     setLoading(true); setError(''); onError('')
     const params = new URLSearchParams()
     if (targetOrganizationId) params.set('organizacionId', targetOrganizationId)
-    const filterKeys = ['importacionId', 'reemplazante', 'titular', 'cuil', 'dni', 'hospital', 'udeo', 'fechaCarga'] as const
-    filterKeys.forEach(key => {
+    ;(['reemplazante', 'titular', 'udeo', 'periodoDesde', 'periodoHasta'] as const).forEach(key => {
       const value = nextFilters[key].trim()
       if (value) params.set(key, value)
     })
+    const dni = nextFilters.dni.trim()
+    if (dni) params.set('cuil', dni)
     params.set('page', String(targetPage))
     params.set('size', String(PAGE_SIZE))
     try {
@@ -106,13 +107,11 @@ function HistoryManager({ token, request, onError, organizations, global, organi
     <section className="card filter-card"><form className="history-filters" onSubmit={submit}>
       {global && <label>Organización<select value={filters.organizacionId} onChange={(event) => update('organizacionId', event.target.value)}><option value="">Todas las organizaciones</option>{organizations.map(item => <option key={item.id} value={item.id}>{item.nombre}</option>)}</select></label>}
       <label>Reemplazante<input value={filters.reemplazante} onChange={(event) => update('reemplazante', event.target.value)} placeholder="Nombre parcial" /></label>
-      <label>DNI<input value={filters.dni} onChange={(event) => update('dni', event.target.value)} placeholder="Con o sin puntos" /></label>
-      <label>CUIL<input value={filters.cuil} onChange={(event) => update('cuil', event.target.value)} placeholder="Exacto" /></label>
+      <label>DNI<input value={filters.dni} onChange={(event) => update('dni', event.target.value)} placeholder="Busca coincidencias en CUIL" /></label>
       <label>Titular<input value={filters.titular} onChange={(event) => update('titular', event.target.value)} placeholder="Nombre parcial" /></label>
-      <label>Hospital<input value={filters.hospital} onChange={(event) => update('hospital', event.target.value)} placeholder="Nombre parcial" /></label>
       <label>UDEO<input value={filters.udeo} onChange={(event) => update('udeo', event.target.value)} placeholder="Código exacto" /></label>
-      <label>Importación<input type="number" min="1" value={filters.importacionId} onChange={(event) => update('importacionId', event.target.value)} placeholder="ID" /></label>
-      <label>Fecha de carga<input type="date" value={filters.fechaCarga} onChange={(event) => update('fechaCarga', event.target.value)} /></label>
+      <label>Período reemplazo desde<input type="date" value={filters.periodoDesde} onChange={(event) => update('periodoDesde', event.target.value)} /></label>
+      <label>Período reemplazo hasta<input type="date" value={filters.periodoHasta} onChange={(event) => update('periodoHasta', event.target.value)} /></label>
       <div className="history-actions"><button className="primary" disabled={loading}>{loading ? <><span className="spinner" />Buscando…</> : 'Buscar'}</button><button className="secondary" type="button" disabled={loading} onClick={clear}>Limpiar filtros</button></div>
     </form></section>
     <section className="card table-card"><div className="card-heading"><div><h2>Histórico de reemplazantes</h2><p>{global ? 'Consulte los reemplazos históricos de todas las organizaciones o filtrá por una.' : `Consulte los reemplazos históricos de ${fixedOrganization?.nombre ?? 'la organización de la sesión'}.`}</p></div>{!global && <span className="muted">Organización: {fixedOrganization?.nombre ?? (fixedOrganizationId ? `#${fixedOrganizationId}` : 'no determinada')}</span>}</div>
