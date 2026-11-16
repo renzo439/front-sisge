@@ -1,11 +1,12 @@
-import { FormEvent, useCallback, useEffect, useState } from 'react'
+import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import History from './History'
 import Migration from './Migration'
 import PersonalSurvey from './PersonalSurvey'
 import Permissions, { type Permission } from './Permissions'
 import Users from './Users'
-import { login } from './services/authService'
-import { api, message } from './services/http'
+import { getMe, login, type AuthMe } from './services/authService'
+import { api, ApiError, message } from './services/http'
+import { canAccessReemplazos, reemplazosOrganizationIds } from './services/permissions'
 import './App.css'
 
 type Page<T> = { content: T[]; totalElements: number; totalPages: number; number: number }
@@ -59,6 +60,10 @@ type RowReviewPayload = {
   agrupamiento?: string; funcion?: string; fechaInicio: string; antiguedadAnios?: number; afectado: boolean
 }
 
+function AccessDenied() {
+  return <section className="card pending-feature"><h2>Acceso denegado</h2><p>No tenés permiso para acceder al módulo de reemplazos.</p></section>
+}
+
 function App() {
   const [token, setToken] = useState(() => localStorage.getItem('sisge-token') ?? '')
   const [error, setError] = useState('')
@@ -85,7 +90,12 @@ function Application({ token, can, onSignOut, error, onError }: { token: string;
   const [collapsed, setCollapsed] = useState(false)
   const [organizations, setOrganizations] = useState<Organization[]>([])
   const [organizationId, setOrganizationId] = useState('')
-  const user = tokenUser(token)
+  const [me, setMe] = useState<AuthMe | null>(null)
+  const [meLoading, setMeLoading] = useState(true)
+  const [forbiddenReemplazos, setForbiddenReemplazos] = useState(false)
+  const user = me?.email || tokenUser(token)
+  const replacementsAllowed = canAccessReemplazos(me)
+
   function navigate(next: string) {
     if (next === path) return
     window.history.pushState({}, '', next); setPath(next)
@@ -105,47 +115,75 @@ function Application({ token, can, onSignOut, error, onError }: { token: string;
     }).catch(() => undefined)
     return () => { active = false }
   }, [token])
+  const refreshMe = useCallback(async () => {
+    setMeLoading(true)
+    try { setMe(await getMe(token)); setForbiddenReemplazos(false) } catch { setMe(null) } finally { setMeLoading(false) }
+  }, [token])
+  useEffect(() => { void refreshMe() }, [refreshMe])
   useEffect(() => {
+    const onFocus = () => { void refreshMe() }
+    const onForbidden = () => { setForbiddenReemplazos(true); void refreshMe() }
+    window.addEventListener('focus', onFocus)
     window.addEventListener('sisge-session-invalid', onSignOut)
-    return () => window.removeEventListener('sisge-session-invalid', onSignOut)
-  }, [onSignOut])
+    window.addEventListener('sisge-reemplazos-forbidden', onForbidden)
+    return () => {
+      window.removeEventListener('focus', onFocus)
+      window.removeEventListener('sisge-session-invalid', onSignOut)
+      window.removeEventListener('sisge-reemplazos-forbidden', onForbidden)
+    }
+  }, [onSignOut, refreshMe])
+
+  const allowedReplacementOrgIds = useMemo(() => reemplazosOrganizationIds(me), [me])
+  const replacementOrganizations = !me || me.global ? organizations : organizations.filter(item => allowedReplacementOrgIds.includes(String(item.id)))
+  useEffect(() => {
+    if (!me || me.global || allowedReplacementOrgIds.length === 0) return
+    if (!organizationId || !allowedReplacementOrgIds.includes(organizationId)) setOrganizationId(allowedReplacementOrgIds[0])
+  }, [me, organizationId, allowedReplacementOrgIds])
+  useEffect(() => {
+    if (!meLoading && !replacementsAllowed && path.startsWith('/reemplazos')) navigate('/dashboard')
+  }, [meLoading, replacementsAllowed, path])
 
   const currentOrganization = organizations.find(item => String(item.id) === organizationId)
   const scope = sessionScope(token, organizations)
-  const content = routeContent(path, { token, can, onError, navigate, organizations, global: scope.global, organizationId: scope.organizationId })
+  const effectiveReplacementsAllowed = replacementsAllowed && !forbiddenReemplazos
+  const content = routeContent(path, { token, can, onError, navigate, organizations, global: scope.global, organizationId: scope.organizationId, me, meLoading, replacementsAllowed: effectiveReplacementsAllowed, replacementOrganizations })
   return <main className={collapsed ? 'app-layout sidebar-collapsed' : 'app-layout'}>
-    <Sidebar path={path} collapsed={collapsed} onToggle={() => setCollapsed(value => !value)} onNavigate={navigate} onSignOut={onSignOut} />
+    <Sidebar path={path} collapsed={collapsed} onToggle={() => setCollapsed(value => !value)} onNavigate={navigate} onSignOut={onSignOut} replacementsAllowed={effectiveReplacementsAllowed} />
     <section className="app-main">
-      <header className="top-header"><button className="menu-toggle" onClick={() => setCollapsed(value => !value)} aria-label="Contraer navegación">☰</button><div className="header-spacer" /><label className="organization-switcher">Organización<select value={organizationId} onChange={event => setOrganizationId(event.target.value)} disabled={organizations.length < 2}><option value="">{currentOrganization ? currentOrganization.nombre : organizations.length ? 'Seleccionar organización' : 'Sin organización seleccionada'}</option>{organizations.map(item => <option key={item.id} value={item.id}>{item.nombre}</option>)}</select></label><span className="notification-bell" aria-label="Sin notificaciones nuevas">♢</span><div className="user-menu"><span className="user-avatar">{user.slice(0, 1).toUpperCase()}</span><div><strong>{user}</strong><small>Usuario autenticado</small></div><button className="link-button" onClick={onSignOut}>Salir</button></div></header>
+      <header className="top-header"><button className="menu-toggle" onClick={() => setCollapsed(value => !value)} aria-label="Contraer navegación">≡</button><div className="header-spacer" /><label className="organization-switcher">Organización<select value={organizationId} onChange={event => setOrganizationId(event.target.value)} disabled={organizations.length < 2}><option value="">{currentOrganization ? currentOrganization.nombre : organizations.length ? 'Seleccionar organización' : 'Sin organización seleccionada'}</option>{organizations.map(item => <option key={item.id} value={item.id}>{item.nombre}</option>)}</select></label><div className="user-menu"><span className="user-avatar">{user.slice(0, 1).toUpperCase()}</span><div><strong>{user}</strong><small>Usuario autenticado</small></div><button className="link-button" onClick={onSignOut}>Salir</button></div></header>
       <div className="page-content"><Breadcrumb path={path} /><PageHeader path={path} />{error && <div className="alert error"><span>{error}</span><button onClick={() => onError('')}>×</button></div>}{content}</div>
     </section>
   </main>
 }
 
-function Sidebar({ path, collapsed, onToggle, onNavigate, onSignOut }: { path: string; collapsed: boolean; onToggle: () => void; onNavigate: (path: string) => void; onSignOut: () => void }) {
+function Sidebar({ path, collapsed, onToggle, onNavigate, onSignOut, replacementsAllowed }: { path: string; collapsed: boolean; onToggle: () => void; onNavigate: (path: string) => void; onSignOut: () => void; replacementsAllowed: boolean }) {
   const groups = [
-    { label: 'Dashboard', icon: '▦', path: '/dashboard', children: [] },
-    { label: 'Personal', icon: '♟', path: '/personal/legajos', children: [{ label: 'Legajos', path: '/personal/legajos' }] },
-    { label: 'Reemplazos', icon: '↻', path: '/reemplazos', children: [{ label: 'Nueva carga', path: '/reemplazos/nueva-carga' }, { label: 'Importaciones', path: '/reemplazos/importaciones' }, { label: 'Pendientes de revisión', path: '/reemplazos/pendientes' }, { label: 'Migrar histórico', path: '/reemplazos/migrar-historico' }, { label: 'Histórico', path: '/reemplazos/historico' }] },
-    { label: 'Administración', icon: '⚙', path: '/administracion', children: ['Usuarios', 'Roles y permisos', 'Permisos', 'Organizaciones', 'Dependencias', 'Sectores', 'Categorías', 'Agrupamientos', 'Tipos de licencia'].map(label => ({ label, path: `/administracion/${slug(label)}` })) },
-    { label: 'Auditoría', icon: '⌕', path: '/auditoria/relevamiento', children: [{ label: 'Relevamiento de personal', path: '/auditoria/relevamiento' }, { label: 'Importaciones', path: '/auditoria/importaciones' }, { label: 'Validación de datos', path: '/auditoria/validacion' }, { label: 'Diferencias', path: '/auditoria/diferencias' }, { label: 'Historial', path: '/auditoria/historial' }] },
-    { label: 'Configuración', icon: '⚙', path: '/configuracion/perfil', children: [{ label: 'Perfil', path: '/configuracion/perfil' }, { label: 'Preferencias', path: '/configuracion/preferencias' }] },
-  ]
-  return <aside className="main-sidebar"><div className="brand"><span className="brand-mark">S</span>{!collapsed && <div><strong>SISGE</strong><small>Gestión de Recursos Humanos</small></div>}<button className="collapse-button" onClick={onToggle} aria-label="Contraer menú">{collapsed ? '›' : '‹'}</button></div><nav>{groups.map(group => <div className="nav-group" key={group.label}><button className={path === group.path || path.startsWith(`${group.path}/`) || group.children.some(item => path === item.path) ? 'nav-button active' : 'nav-button'} onClick={() => onNavigate(group.children[0]?.path ?? group.path)}><span className="nav-icon">{group.icon}</span>{!collapsed && group.label}</button>{!collapsed && group.children.map(item => <button key={item.path} className={path === item.path || (item.path === '/personal/legajos' && path.startsWith('/personal/legajos/')) ? 'nav-child active' : 'nav-child'} onClick={() => onNavigate(item.path)}>{item.label}</button>)}</div>)}</nav><button className="sign-out" onClick={onSignOut}><span>↪</span>{!collapsed && 'Cerrar sesión'}</button></aside>
+    { label: 'Dashboard', icon: '■', path: '/dashboard', children: [] },
+    { label: 'Personal', icon: 'P', path: '/personal/legajos', children: [{ label: 'Legajos', path: '/personal/legajos' }] },
+    { label: 'Reemplazos', icon: 'R', path: '/reemplazos', children: [{ label: 'Nueva carga', path: '/reemplazos/nueva-carga' }, { label: 'Importaciones', path: '/reemplazos/importaciones' }, { label: 'Pendientes de revisión', path: '/reemplazos/pendientes' }, { label: 'Migrar histórico', path: '/reemplazos/migrar-historico' }, { label: 'Histórico', path: '/reemplazos/historico' }] },
+    { label: 'Administración', icon: 'A', path: '/administracion', children: ['Usuarios', 'Roles y permisos', 'Permisos', 'Organizaciones', 'Dependencias', 'Sectores', 'Categorías', 'Agrupamientos', 'Tipos de licencia'].map(label => ({ label, path: `/administracion/${slug(label)}` })) },
+    { label: 'Auditoría', icon: 'U', path: '/auditoria/relevamiento', children: [{ label: 'Relevamiento de personal', path: '/auditoria/relevamiento' }, { label: 'Importaciones', path: '/auditoria/importaciones' }, { label: 'Validación de datos', path: '/auditoria/validacion' }, { label: 'Diferencias', path: '/auditoria/diferencias' }, { label: 'Historial', path: '/auditoria/historial' }] },
+    { label: 'Configuración', icon: 'C', path: '/configuracion/perfil', children: [{ label: 'Perfil', path: '/configuracion/perfil' }, { label: 'Preferencias', path: '/configuracion/preferencias' }] },
+  ].filter(group => group.label !== 'Reemplazos' || replacementsAllowed)
+  return <aside className="main-sidebar"><div className="brand"><span className="brand-mark">S</span>{!collapsed && <div><strong>SISGE</strong><small>Gestión de Recursos Humanos</small></div>}<button className="collapse-button" onClick={onToggle} aria-label="Contraer menú">{collapsed ? '›' : '‹'}</button></div><nav>{groups.map(group => <div className="nav-group" key={group.label}><button className={path === group.path || path.startsWith(`${group.path}/`) || group.children.some(item => path === item.path) ? 'nav-button active' : 'nav-button'} onClick={() => onNavigate(group.children[0]?.path ?? group.path)}><span className="nav-icon">{group.icon}</span>{!collapsed && group.label}</button>{!collapsed && group.children.map(item => <button key={item.path} className={path === item.path || (item.path === '/personal/legajos' && path.startsWith('/personal/legajos/')) ? 'nav-child active' : 'nav-child'} onClick={() => onNavigate(item.path)}>{item.label}</button>)}</div>)}</nav><button className="sign-out" onClick={onSignOut}><span>⎋</span>{!collapsed && 'Cerrar sesión'}</button></aside>
 }
 
-type RouteContext = { token: string; can: (permission: string) => boolean; onError: (message: string) => void; navigate: (path: string) => void; organizations: Organization[]; global: boolean; organizationId: string }
+type RouteContext = { token: string; can: (permission: string) => boolean; onError: (message: string) => void; navigate: (path: string) => void; organizations: Organization[]; global: boolean; organizationId: string; me: AuthMe | null; meLoading: boolean; replacementsAllowed: boolean; replacementOrganizations: Organization[] }
 function routeContent(path: string, context: RouteContext) {
-  if (path === '/dashboard') return <Dashboard onNavigate={context.navigate} />
+  if (path.startsWith('/reemplazos')) {
+    if (context.meLoading) return <p className="empty">Cargando permisos…</p>
+    if (!context.replacementsAllowed) return <AccessDenied />
+  }
+  if (path === '/dashboard') return <Dashboard onNavigate={context.navigate} replacementsAllowed={context.replacementsAllowed} />
   if (path === '/personal' || path === '/personal/legajos') return <Personal token={context.token} can={context.can} onError={context.onError} allowImport={false} onOpenLegajo={id => context.navigate(`/personal/legajos/${id}`)} />
   if (path.startsWith('/personal/legajos/')) return <LegajoDetail />
   if (path === '/reemplazos') return <ReplacementsHome onNavigate={context.navigate} />
-  if (path === '/reemplazos/nueva-carga') return <Upload token={context.token} onComplete={() => context.navigate('/reemplazos/importaciones')} onError={context.onError} />
-  if (path === '/reemplazos/importaciones') return <Imports token={context.token} onError={context.onError} />
+  if (path === '/reemplazos/nueva-carga') return <Upload token={context.token} organizations={context.replacementOrganizations} onComplete={() => context.navigate('/reemplazos/importaciones')} onError={context.onError} />
+  if (path === '/reemplazos/importaciones') return <Imports token={context.token} organizations={context.replacementOrganizations} onError={context.onError} />
   if (path.startsWith('/reemplazos/importaciones/')) return <ReplacementDetail token={context.token} importId={path.split('/').pop() ?? ''} onError={context.onError} />
   if (path === '/reemplazos/pendientes') return <AdminImports token={context.token} can={context.can} onError={context.onError} />
   if (path === '/reemplazos/migrar-historico') return <Migration token={context.token} can={context.can} request={api} />
-  if (path === '/reemplazos/historico') return <History token={context.token} can={context.can} request={api} onError={context.onError} organizations={context.organizations} global={context.global} organizationId={context.organizationId} />
+  if (path === '/reemplazos/historico') return <History token={context.token} request={api} onError={context.onError} organizations={context.replacementOrganizations} global={Boolean(context.me?.global)} organizationId={context.organizationId} />
   if (path === '/auditoria/relevamiento') return <AuditOverview />
   if (path === '/auditoria/importaciones') return <PersonalSurvey token={context.token} can={context.can} request={api} onError={context.onError} />
   if (path.startsWith('/auditoria/importaciones/')) return <PersonalSurvey token={context.token} can={context.can} request={api} importId={path.split('/').pop()} onError={context.onError} />
@@ -167,7 +205,7 @@ function PageHeader({ path }: { path: string }) {
   return current ? <div className="page-header"><div><p className="eyebrow">{path.startsWith('/auditoria') ? 'AUDITORÍA' : path.startsWith('/reemplazos') ? 'REEMPLAZOS' : path.startsWith('/personal') ? 'PERSONAL' : 'SISGE'}</p><h1>{current[0]}</h1><p>{current[1]}</p></div></div> : null
 }
 function Breadcrumb({ path }: { path: string }) { const labels = path.split('/').filter(Boolean).map(part => ({ dashboard: 'Dashboard', personal: 'Personal', legajos: 'Legajos', reemplazos: 'Reemplazos', auditoria: 'Auditoría', administracion: 'Administración', configuracion: 'Configuración', 'nueva-carga': 'Nueva carga', importaciones: 'Importaciones', pendientes: 'Pendientes', historico: 'Histórico', 'migrar-historico': 'Migrar histórico', relevamiento: 'Relevamiento', validacion: 'Validación', diferencias: 'Diferencias', historial: 'Historial', usuarios: 'Usuarios', 'roles-y-permisos': 'Roles y permisos', permisos: 'Permisos', organizaciones: 'Organizaciones', perfil: 'Perfil', preferencias: 'Preferencias' }[part] ?? part)); return <div className="breadcrumbs">{labels.join(' › ')}</div> }
-function Dashboard({ onNavigate }: { onNavigate: (path: string) => void }) { return <div className="stack"><section className="dashboard-stats">{[['Personal', 'Sin información disponible', '/personal/legajos'], ['Reemplazos', 'Sin información disponible', '/reemplazos'], ['Importaciones pendientes', 'Sin información disponible', '/reemplazos/pendientes'], ['Relevamientos', 'Sin información disponible', '/auditoria/relevamiento']].map(([label, value, path]) => <button className="stat-card" key={label} onClick={() => onNavigate(path)}><span>{label}</span><strong>{value}</strong></button>)}</section><section className="dashboard-grid"><PendingFeature title="Personal por organización" text="Sin información disponible." /><PendingFeature title="Personal por categoría" text="Sin información disponible." /><PendingFeature title="Personal por sector" text="Sin información disponible." /><PendingFeature title="Actividad reciente" text="Sin información disponible." /></section></div> }
+function Dashboard({ onNavigate, replacementsAllowed }: { onNavigate: (path: string) => void; replacementsAllowed: boolean }) { return <div className="stack"><section className="dashboard-stats">{[['Personal', 'Sin información disponible', '/personal/legajos'], ...(replacementsAllowed ? [['Reemplazos', 'Sin información disponible', '/reemplazos'] as [string,string,string]] : []), ...(replacementsAllowed ? [['Importaciones pendientes', 'Sin información disponible', '/reemplazos/pendientes'] as [string,string,string]] : []), ['Relevamientos', 'Sin información disponible', '/auditoria/relevamiento']].map(([label, value, p]) => <button className="stat-card" key={label} onClick={() => onNavigate(p)}><span>{label}</span><strong>{value}</strong></button>)}</section><section className="dashboard-grid"><PendingFeature title="Personal por organización" text="Sin información disponible." /><PendingFeature title="Personal por categoría" text="Sin información disponible." /><PendingFeature title="Personal por sector" text="Sin información disponible." /><PendingFeature title="Actividad reciente" text="Sin información disponible." /></section></div> }
 function ReplacementsHome({ onNavigate }: { onNavigate: (path: string) => void }) { return <section className="quick-actions">{[['Nueva carga', 'Importe y valide un archivo Excel.', '/reemplazos/nueva-carga'], ['Importaciones', 'Consulte las cargas realizadas.', '/reemplazos/importaciones'], ['Pendientes de revisión', 'Revise importaciones pendientes.', '/reemplazos/pendientes'], ['Migrar histórico', 'Importe el histórico consolidado y asocie organizaciones.', '/reemplazos/migrar-historico'], ['Histórico', 'Consulte reemplazos consolidados.', '/reemplazos/historico']].map(([title, description, path]) => <button className="card quick-action" key={title} onClick={() => onNavigate(path)}><h2>{title}</h2><p>{description}</p><span>Ver sección →</span></button>)}</section> }
 function AuditOverview() { return <section className="dashboard-stats">{['Personal relevado', 'Información completa', 'Información incompleta', 'Con inconsistencias', 'Pendientes de revisión'].map(label => <div className="stat-card" key={label}><span>{label}</span><strong>Sin información disponible</strong></div>)}</section> }
 function PendingFeature({ title, text }: { title: string; text: string }) { return <section className="card pending-feature"><h2>{title}</h2><p>{text}</p></section> }
@@ -175,16 +213,24 @@ function Settings({ path }: { path: string }) { return <section className="card 
 function LegajoDetail() { return <section className="card pending-feature"><h2>Detalle del legajo</h2><p>El detalle estará disponible cuando el backend exponga la consulta individual de personas.</p><div className="tabs"><button className="active">Datos personales</button>{['Datos laborales', 'Destino', 'Situación', 'Licencias', 'Novedades', 'Documentación', 'Historial'].map(item => <button key={item} disabled>{item} · Próximamente</button>)}</div></section> }
 function slug(value: string) { return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, '-') }
 function tokenUser(token: string) { try { const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))) as Record<string, unknown>; return String(payload.name ?? payload.nombre ?? payload.email ?? payload.sub ?? 'Usuario') } catch { return 'Usuario' } }
+function onReemplazosError(error: unknown, onError: (message: string) => void) {
+  if (error instanceof ApiError && error.status === 403) {
+    window.dispatchEvent(new Event('sisge-reemplazos-forbidden'))
+    onError('Acceso denegado: no tenés permiso para acceder al módulo de reemplazos.')
+    return
+  }
+  onError(message(error))
+}
 function ReplacementDetail({ token, importId, onError }: { token: string; importId: string; onError: (message: string) => void }) {
   const [detail, setDetail] = useState<ImportDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const load = useCallback(async () => {
     setLoading(true)
-    try { setDetail(await api<ImportDetail>(token, `/api/v1/importaciones/${importId}`)) } catch (exception) { onError(message(exception)) } finally { setLoading(false) }
+    try { setDetail(await api<ImportDetail>(token, `/api/v1/importaciones/${importId}`)) } catch (exception) { onReemplazosError(exception, onError) } finally { setLoading(false) }
   }, [importId, onError, token])
   useEffect(() => { void load() }, [load])
   async function sendReview(id: number) {
-    try { setDetail(await api<ImportDetail>(token, `/api/v1/importaciones/${id}/enviar-revision`, { method: 'POST' })) } catch (exception) { onError(message(exception)) }
+    try { setDetail(await api<ImportDetail>(token, `/api/v1/importaciones/${id}/enviar-revision`, { method: 'POST' })) } catch (exception) { onReemplazosError(exception, onError) }
   }
   return loading ? <p className="empty">Cargando importación…</p> : detail ? <ImportDetailPanel detail={detail} token={token} onRefresh={async () => { await load() }} onSubmit={sendReview} onError={onError} /> : <PendingFeature title="Importación no disponible" text="No fue posible obtener el detalle solicitado." />
 }
@@ -194,11 +240,11 @@ function AdminImports({ token, can, onError }: { token: string; can: (permission
   const [confirm, setConfirm] = useState<{ id: number; action: 'observar' | 'rechazar' | 'aprobar' | 'cerrar' } | null>(null)
   async function load() {
     setLoading(true); onError('')
-    try { setImports(await api<Page<ImportSummary>>(token, '/api/v1/admin/importaciones?size=50')) } catch (exception) { onError(message(exception)) } finally { setLoading(false) }
+    try { setImports(await api<Page<ImportSummary>>(token, '/api/v1/admin/importaciones?size=50')) } catch (exception) { onReemplazosError(exception, onError) } finally { setLoading(false) }
   }
   async function execute() {
     if (!confirm) return
-    try { await api(token, `/api/v1/admin/importaciones/${confirm.id}/${confirm.action}`, { method: 'POST' }); setConfirm(null); await load() } catch (exception) { onError(message(exception)) }
+    try { await api(token, `/api/v1/admin/importaciones/${confirm.id}/${confirm.action}`, { method: 'POST' }); setConfirm(null); await load() } catch (exception) { onReemplazosError(exception, onError) }
   }
   const actionLabel = confirm ? ({ observar: 'Observar', rechazar: 'Rechazar', aprobar: 'Aprobar', cerrar: 'Cerrar' }[confirm.action]) : ''
   return <section className="card table-card"><div className="card-heading"><div><h2>Importaciones pendientes</h2><p>Consulte y resuelva las importaciones de reemplazos pendientes de revisión.</p></div><button className="primary" disabled={loading} onClick={() => void load()}>{loading ? 'Cargando…' : 'Cargar pendientes'}</button></div>{imports && (imports.content.length ? <div className="scroll-table"><table><thead><tr><th>Archivo</th><th>Organización</th><th>Fecha</th><th>Estado</th><th>Usuario</th><th>Acciones</th></tr></thead><tbody>{imports.content.map(item => <tr key={item.id}><td>{item.archivoOrigen}</td><td>{item.organizacionNombre ?? 'Organización no informada'}</td><td>{formatDate(item.fechaCreacion)}</td><td><Status value={item.estado} /></td><td>{item.creadoPorEmail ?? '—'}</td><td className="row-actions">{(['observar', 'rechazar', 'aprobar', 'cerrar'] as const).map(action => <button key={action} className="link-button" disabled={!can(`REEMPLAZOS_${action.toUpperCase()}`)} onClick={() => setConfirm({ id: item.id, action })}>{action}</button>)}</td></tr>)}</tbody></table></div> : <Empty text="No hay importaciones pendientes para los filtros seleccionados." />)}{confirm && <div className="modal-backdrop"><section className="modal confirm-dialog"><h2>{actionLabel} importación</h2><p>¿Confirma la acción seleccionada sobre esta importación?</p><div className="action-group"><button className="secondary" onClick={() => setConfirm(null)}>Cancelar</button><button className="primary" onClick={() => void execute()}>Confirmar</button></div></section></div>}</section>
@@ -405,18 +451,14 @@ function Login({ onAuthenticated }: { onAuthenticated: (token: string) => void }
   </form></main>
 }
 
-function Upload({ token, onComplete, onError }: { token: string; onComplete: () => void; onError: (error: string) => void }) {
+function Upload({ token, organizations, onComplete, onError }: { token: string; organizations: Organization[]; onComplete: () => void; onError: (error: string) => void }) {
   const [organizationId, setOrganizationId] = useState('')
-  const [organizations, setOrganizations] = useState<Organization[]>([])
   const [file, setFile] = useState<File | null>(null)
   const [result, setResult] = useState<ImportDetail | null>(null)
   const [loading, setLoading] = useState(false)
   useEffect(() => {
-    api<Organization[]>(token, '/api/v1/organizaciones').then(items => {
-      setOrganizations(items)
-      if (items.length === 1) setOrganizationId(String(items[0].id))
-    }).catch((exception: unknown) => onError(message(exception)))
-  }, [token, onError])
+    if (organizations.length === 1) setOrganizationId(String(organizations[0].id))
+  }, [organizations])
 
   async function submit(event: FormEvent) {
     event.preventDefault()
@@ -426,7 +468,7 @@ function Upload({ token, onComplete, onError }: { token: string; onComplete: () 
       const form = new FormData(); form.append('file', file)
       const detail = await api<ImportDetail>(token, `/api/v1/organizaciones/${organizationId}/importaciones/upload`, { method: 'POST', body: form })
       setResult(detail)
-    } catch (exception) { onError(message(exception)) } finally { setLoading(false) }
+    } catch (exception) { onReemplazosError(exception, onError) } finally { setLoading(false) }
   }
 
   return <div className="stack">
@@ -441,31 +483,27 @@ function Upload({ token, onComplete, onError }: { token: string; onComplete: () 
   </div>
 }
 
-function Imports({ token, onError }: { token: string; onError: (error: string) => void }) {
+function Imports({ token, organizations, onError }: { token: string; organizations: Organization[]; onError: (error: string) => void }) {
   const [organizationId, setOrganizationId] = useState('')
-  const [organizations, setOrganizations] = useState<Organization[]>([])
   const [imports, setImports] = useState<Page<ImportSummary> | null>(null)
   const [detail, setDetail] = useState<ImportDetail | null>(null)
   const [loading, setLoading] = useState(false)
   useEffect(() => {
-    api<Organization[]>(token, '/api/v1/organizaciones').then(items => {
-      setOrganizations(items)
-      if (items.length === 1) setOrganizationId(String(items[0].id))
-    }).catch((exception: unknown) => onError(message(exception)))
-  }, [token, onError])
+    if (organizations.length === 1) setOrganizationId(String(organizations[0].id))
+  }, [organizations])
 
   async function load(event?: FormEvent) {
     event?.preventDefault(); setLoading(true); onError('')
     try {
       const query = organizationId ? `?organizacionId=${organizationId}&size=50` : '?size=50'
       setImports(await api<Page<ImportSummary>>(token, `/api/v1/importaciones${query}`))
-    } catch (exception) { onError(message(exception)) } finally { setLoading(false) }
+    } catch (exception) { onReemplazosError(exception, onError) } finally { setLoading(false) }
   }
   async function open(id: number) {
-    try { setDetail(await api<ImportDetail>(token, `/api/v1/importaciones/${id}`)) } catch (exception) { onError(message(exception)) }
+    try { setDetail(await api<ImportDetail>(token, `/api/v1/importaciones/${id}`)) } catch (exception) { onReemplazosError(exception, onError) }
   }
   async function submit(id: number) {
-    try { setDetail(await api<ImportDetail>(token, `/api/v1/importaciones/${id}/enviar-revision`, { method: 'POST' })); await load() } catch (exception) { onError(message(exception)) }
+    try { setDetail(await api<ImportDetail>(token, `/api/v1/importaciones/${id}/enviar-revision`, { method: 'POST' })); await load() } catch (exception) { onReemplazosError(exception, onError) }
   }
 
   return <div className="stack"><section className="card filter-card"><form onSubmit={load}><label>Organización<select value={organizationId} onChange={(event) => setOrganizationId(event.target.value)}><option value="">Todas las organizaciones</option>{organizations.map(item => <option key={item.id} value={item.id}>{item.nombre}</option>)}</select></label><button className="primary" disabled={loading}>{loading ? 'Buscando…' : 'Buscar'}</button></form></section>
@@ -486,7 +524,7 @@ function RowEditor({ row, token, importId, onClose, onSaved, onError }: { row: I
   const [form, setForm] = useState({ agrupamiento: row.agrupamiento ?? '', funcionTitular: row.funcionTitular ?? '', tipoLicencia: row.tipoLicencia ?? '', observaciones: row.observaciones ?? '', lugarTrabajo: row.lugarTrabajo ?? '' })
   async function save(event: FormEvent) {
     event.preventDefault()
-    try { await api(token, `/api/v1/importaciones/${importId}/reemplazantes/${row.id}`, { method: 'PUT', body: JSON.stringify(form) }); await onSaved() } catch (exception) { onError(message(exception)) }
+    try { await api(token, `/api/v1/importaciones/${importId}/reemplazantes/${row.id}`, { method: 'PUT', body: JSON.stringify(form) }); await onSaved() } catch (exception) { onReemplazosError(exception, onError) }
   }
   return <div className="modal-backdrop"><form className="modal" onSubmit={save}><div className="card-heading"><h2>Editar fila {row.filaOrigen}</h2><button className="close" type="button" onClick={onClose}>×</button></div><div className="form-grid">{Object.entries(form).map(([key, value]) => <label key={key}>{label(key)}{key === 'observaciones' ? <textarea value={value} onChange={(event) => setForm({ ...form, [key]: event.target.value })} /> : <input value={value} onChange={(event) => setForm({ ...form, [key]: event.target.value })} />}</label>)}</div><button className="primary">Guardar cambios</button></form></div>
 }

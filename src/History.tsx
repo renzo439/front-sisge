@@ -2,7 +2,6 @@ import { FormEvent, useState } from 'react'
 import { ApiError } from './services/http'
 
 type Request = <T>(token: string, path: string, init?: RequestInit) => Promise<T>
-type Can = (permission: string) => boolean
 type Organization = { id: number; nombre: string; udeo?: string }
 
 type HistoryRow = {
@@ -37,7 +36,7 @@ function udeo(row: HistoryRow, organizations: Organization[]) {
 
 function errorText(error: unknown, hasOrganization: boolean) {
   if (error instanceof ApiError) {
-    if (error.status === 403) return 'No tenés permiso para consultar el histórico de reemplazantes (REEMPLAZANTES_VER).'
+    if (error.status === 403) return 'Acceso denegado: no tenés permiso para consultar el histórico de reemplazantes.'
     if (error.status === 400) return hasOrganization ? (error.message || 'Los filtros indicados no son válidos.') : 'Seleccioná una organización para consultar el histórico.'
     if (error.status === 500) return 'Ocurrió un error en el servidor al consultar el histórico. Intentá nuevamente.'
     return error.message || 'No fue posible consultar el histórico de reemplazantes.'
@@ -45,13 +44,10 @@ function errorText(error: unknown, hasOrganization: boolean) {
   return 'No fue posible consultar el histórico de reemplazantes.'
 }
 
-export default function History({ token, can, request, onError, organizations, global, organizationId }: {
-  token: string; can: Can; request: Request; onError: (message: string) => void
+export default function History({ token, request, onError, organizations, global, organizationId }: {
+  token: string; request: Request; onError: (message: string) => void
   organizations: Organization[]; global: boolean; organizationId: string
 }) {
-  if (!can('REEMPLAZANTES_VER')) {
-    return <section className="card pending-feature"><h2>Acceso restringido</h2><p>Se requiere el permiso REEMPLAZANTES_VER para consultar el histórico de reemplazantes.</p></section>
-  }
   return <HistoryManager token={token} request={request} onError={onError} organizations={organizations} global={global} organizationId={organizationId} />
 }
 
@@ -65,7 +61,7 @@ function HistoryManager({ token, request, onError, organizations, global, organi
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  const fixedOrganizationId = global ? '' : organizationId
+  const fixedOrganizationId = global ? '' : (organizationId || (organizations.length === 1 ? String(organizations[0].id) : ''))
   const fixedOrganization = organizations.find(item => String(item.id) === fixedOrganizationId)
 
   function update<K extends FilterKey>(key: K, value: Filters[K]) {
@@ -77,7 +73,7 @@ function HistoryManager({ token, request, onError, organizations, global, organi
     const targetOrganizationId = global ? nextFilters.organizacionId : fixedOrganizationId
     if (!global && !targetOrganizationId) {
       setRows(null)
-      setError('No se pudo determinar la organización de la sesión. Volvé a iniciar sesión o contactá al administrador.')
+      setError('No se pudo determinar la organización permitida. Actualizá la sesión o contactá al administrador.')
       return
     }
     setLoading(true); setError(''); onError('')
@@ -97,6 +93,9 @@ function HistoryManager({ token, request, onError, organizations, global, organi
       setPage(targetPage)
     } catch (exception) {
       setRows(null)
+      if (exception instanceof ApiError && exception.status === 403) {
+        window.dispatchEvent(new Event('sisge-reemplazos-forbidden'))
+      }
       setError(errorText(exception, Boolean(targetOrganizationId)))
     } finally { setLoading(false) }
   }
@@ -119,7 +118,7 @@ function HistoryManager({ token, request, onError, organizations, global, organi
       <label>Período reemplazo hasta<input type="date" value={filters.periodoHasta} onChange={(event) => update('periodoHasta', event.target.value)} /></label>
       <div className="history-actions"><button className="primary" disabled={loading}>{loading ? <><span className="spinner" />Buscando…</> : 'Buscar'}</button><button className="secondary" type="button" disabled={loading} onClick={clear}>Limpiar filtros</button></div>
     </form></section>
-    <section className="card table-card"><div className="card-heading"><div><h2>Histórico de reemplazantes</h2><p>{global ? 'Consulte los reemplazos históricos de todas las organizaciones o filtrá por una.' : `Consulte los reemplazos históricos de ${fixedOrganization?.nombre ?? 'la organización de la sesión'}.`}</p></div>{!global && <span className="muted">Organización: {fixedOrganization?.nombre ?? (fixedOrganizationId ? `#${fixedOrganizationId}` : 'no determinada')}</span>}</div>
+    <section className="card table-card"><div className="card-heading"><div><h2>Histórico de reemplazantes</h2><p>{global ? 'Consulte los reemplazos históricos de todas las organizaciones o filtrá por una.' : `Consulte los reemplazos históricos de ${fixedOrganization?.nombre ?? 'las organizaciones permitidas'}.`}</p></div>{!global && <span className="muted">Organización: {fixedOrganization?.nombre ?? (organizations.length === 1 ? organizations[0].nombre : 'permitida')}</span>}</div>
       {error && <div className="alert error"><span>{error}</span></div>}
       {loading && <p className="empty">Cargando registros…</p>}
       {!loading && rows && (rows.content.length ? <div className="scroll-table"><table><thead><tr><th>Reemplazante</th><th>CUIL</th><th>Titular</th><th>Hospital</th><th>UDEO</th><th>Período</th></tr></thead><tbody>{rows.content.map(row => <tr key={row.id}><td>{row.reemplazante || '—'}</td><td>{row.cuil || '—'}</td><td>{row.titular || '—'}</td><td>{hospital(row, organizations)}</td><td>{udeo(row, organizations)}</td><td>{formatPeriod(row.periodoDesde, row.periodoHasta)}</td></tr>)}</tbody></table></div> : <p className="empty">No hay registros históricos para los filtros seleccionados.</p>)}

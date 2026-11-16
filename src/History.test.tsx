@@ -19,13 +19,13 @@ const organizations = [{ id: 5, nombre: 'Hospital Central', udeo: '6118' }, { id
 
 function renderModule(request: Request, global: boolean, organizationId = '') {
   const onError = vi.fn()
-  return { onError, ...render(<History token="token" can={() => true} request={request} onError={onError} organizations={organizations} global={global} organizationId={organizationId} />) }
+  return { onError, ...render(<History token="token" request={request} onError={onError} organizations={organizations} global={global} organizationId={organizationId} />) }
 }
 
 describe('History', () => {
   afterEach(() => { cleanup() })
 
-  it('fija la organización de la sesión para usuarios de hospital y oculta el selector', async () => {
+  it('fija la organización permitida para usuarios no globales y oculta el selector', async () => {
     const request = vi.fn(async () => page) as unknown as Request
     renderModule(request, false, '5')
     expect(screen.queryByLabelText('Organización')).toBeNull()
@@ -76,7 +76,7 @@ describe('History', () => {
     expect(screen.getByLabelText('Período reemplazo hasta')).toBeTruthy()
   })
 
-  it('pagina los resultados y muestra los estados de error 400, 403 y 500', async () => {
+  it('pagina los resultados', async () => {
     const request = vi.fn(async () => ({ ...page, totalPages: 2, last: false })) as unknown as Request
     renderModule(request, true)
     fireEvent.click(screen.getByText('Buscar'))
@@ -85,7 +85,7 @@ describe('History', () => {
   })
 
   it('muestra mensajes específicos para 403, 400 y 500', async () => {
-    for (const [status, message] of [[403, 'permiso'], [400, 'organización'], [500, 'servidor']] as const) {
+    for (const [status, message] of [[403, 'acceso denegado'], [400, 'organización'], [500, 'servidor']] as const) {
       const request = vi.fn(async () => { throw new ApiError('Error', status) }) as unknown as Request
       const view = renderModule(request, true)
       fireEvent.click(screen.getByText('Buscar'))
