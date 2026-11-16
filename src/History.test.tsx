@@ -15,7 +15,7 @@ const row = {
   fechaCierre: '2026-11-12T18:00:00Z',
 }
 const page = { content: [row], totalElements: 1, totalPages: 1, number: 0, last: true }
-const organizations = [{ id: 5, nombre: 'Hospital Central' }, { id: 6, nombre: 'Hospital Norte' }]
+const organizations = [{ id: 5, nombre: 'Hospital Central', udeo: '6118' }, { id: 6, nombre: 'Hospital Norte', udeo: '6200' }]
 
 function renderModule(request: Request, global: boolean, organizationId = '') {
   const onError = vi.fn()
@@ -99,5 +99,19 @@ describe('History', () => {
     renderModule(request, true)
     fireEvent.click(screen.getByText('Buscar'))
     expect(await screen.findByText('Sin organización')).toBeTruthy()
+  })
+
+  it('usa el nombre de la organización cuando hospitalNombre viene vacío', async () => {
+    const request = vi.fn(async () => ({ ...page, content: [{ ...row, organizacionId: 5, hospitalNombre: null }] })) as unknown as Request
+    renderModule(request, true)
+    fireEvent.click(screen.getByText('Buscar'))
+    expect((await screen.findAllByText('Hospital Central')).length).toBeGreaterThan(0)
+  })
+
+  it('usa la UDEO de la organización cuando row.udeo viene vacío', async () => {
+    const request = vi.fn(async () => ({ ...page, content: [{ ...row, organizacionId: 5, udeo: null }] })) as unknown as Request
+    renderModule(request, true)
+    fireEvent.click(screen.getByText('Buscar'))
+    expect(await screen.findByText('6118')).toBeTruthy()
   })
 })
