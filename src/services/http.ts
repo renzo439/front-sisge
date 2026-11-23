@@ -24,5 +24,19 @@ export async function api<T = unknown>(token: string, path: string, init: Reques
 }
 
 export function message(error: unknown) {
+  if (error instanceof ApiError) {
+    if (Array.isArray(error.details) && error.details.length) {
+      const details = error.details
+        .map((item) => {
+          if (!item || typeof item !== 'object') return ''
+          const detail = item as { field?: unknown; message?: unknown }
+          const text = typeof detail.message === 'string' ? detail.message : ''
+          return text
+        })
+        .filter(Boolean)
+      if (details.length) return `${error.message}: ${details.join('. ')}`
+    }
+    return error.message
+  }
   return error instanceof Error ? error.message : 'Ocurrió un error inesperado'
 }
