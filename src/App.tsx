@@ -1,10 +1,10 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
+﻿import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import History from './History'
 import Migration from './Migration'
 import PersonalSurvey from './PersonalSurvey'
 import Permissions, { type Permission } from './Permissions'
 import Users from './Users'
-import { getMe, login, type AuthMe } from './services/authService'
+import { getMe, login, type Me, type OrganizationSummary } from './services/authService'
 import { api, ApiError, message } from './services/http'
 import {
   canAccessAdministracion,
@@ -15,7 +15,6 @@ import {
   canAccessReemplazos,
   getDefaultPath,
   hasPermission,
-  reemplazosOrganizationIds,
 } from './services/permissions'
 import './App.css'
 
@@ -105,13 +104,12 @@ function isPathAllowed(path: string, access: ModuleAccess) {
 function Application({ token, onSignOut, error, onError }: { token: string; onSignOut: () => void; error: string; onError: (message: string) => void }) {
   const [path, setPath] = useState(() => window.location.pathname)
   const [collapsed, setCollapsed] = useState(false)
-  const [organizations, setOrganizations] = useState<Organization[]>([])
-  const [organizationId, setOrganizationId] = useState('')
-  const [me, setMe] = useState<AuthMe | null>(null)
+  const [me, setMe] = useState<Me | null>(null)
   const [meLoading, setMeLoading] = useState(true)
   const [forbiddenReemplazos, setForbiddenReemplazos] = useState(false)
-  const user = me?.email || tokenUser(token)
-  const can = useCallback((permission: string, orgId?: string | number) => hasPermission(me, permission, orgId), [me])
+  const [selectedOrgId, setSelectedOrgId] = useState(() => localStorage.getItem('sisge-selected-org') ?? '')
+  const user = me ? `${me.nombre} ${me.apellido}`.trim() || me.email || me.username : 'Usuario'
+  const can = useCallback((permission: string) => hasPermission(me, permission), [me])
   const replacementsAllowed = canAccessReemplazos(me)
   const dashboardAllowed = canAccessDashboard(me)
   const personalAllowed = canAccessPersonal(me)
@@ -131,15 +129,6 @@ function Application({ token, onSignOut, error, onError }: { token: string; onSi
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
   }, [])
-  useEffect(() => {
-    let active = true
-    api<Organization[]>(token, '/api/v1/organizaciones').then(items => {
-      if (!active) return
-      setOrganizations(items)
-      if (items.length === 1) setOrganizationId(String(items[0].id))
-    }).catch(() => undefined)
-    return () => { active = false }
-  }, [token])
   const refreshMe = useCallback(async () => {
     setMeLoading(true)
     try { setMe(await getMe(token)); setForbiddenReemplazos(false) } catch { setMe(null) } finally { setMeLoading(false) }
@@ -158,27 +147,37 @@ function Application({ token, onSignOut, error, onError }: { token: string; onSi
     }
   }, [onSignOut, refreshMe])
 
-  const allowedReplacementOrgIds = useMemo(() => reemplazosOrganizationIds(me), [me])
-  const replacementOrganizations = !me || me.global ? organizations : organizations.filter(item => allowedReplacementOrgIds.includes(String(item.id)))
+  const activeOrganization: OrganizationSummary | null = useMemo(() => {
+    if (!me) return null
+    if (!me.global) return me.organizacion
+    if (me.organizaciones.length === 0) return null
+    const selected = me.organizaciones.find(o => String(o.id) === selectedOrgId)
+    return selected ?? me.organizaciones[0]
+  }, [me, selectedOrgId])
   useEffect(() => {
-    if (!me || me.global || allowedReplacementOrgIds.length === 0) return
-    if (!organizationId || !allowedReplacementOrgIds.includes(organizationId)) setOrganizationId(allowedReplacementOrgIds[0])
-  }, [me, organizationId, allowedReplacementOrgIds])
+    if (!me?.global || !activeOrganization) return
+    setSelectedOrgId(String(activeOrganization.id))
+    localStorage.setItem('sisge-selected-org', String(activeOrganization.id))
+  }, [me, activeOrganization])
+  const activeOrganizationId = activeOrganization ? String(activeOrganization.id) : ''
+  const orgConfigError = !meLoading && me && !me.global && !me.organizacionId ? 'Usuario sin organización asignada. Contacte al administrador.' : ''
+
   useEffect(() => {
     if (meLoading) return
     const allowed = isPathAllowed(path, { dashboardAllowed, personalAllowed, replacementsAllowed, administracionAllowed, auditoriaAllowed, configuracionAllowed })
     if (path === '/' || !allowed) navigate(defaultPath, true)
   }, [meLoading, path, defaultPath, dashboardAllowed, personalAllowed, replacementsAllowed, administracionAllowed, auditoriaAllowed, configuracionAllowed])
 
-  const currentOrganization = organizations.find(item => String(item.id) === organizationId)
-  const scope = sessionScope(token, organizations)
   const effectiveReplacementsAllowed = replacementsAllowed && !forbiddenReemplazos
   const canMigrateReemplazos = can('IMPORTACIONES_APROBAR') && can('IMPORTACIONES_CERRAR')
-  const content = routeContent(path, { token, can, onError, navigate, organizations, global: scope.global, organizationId: scope.organizationId, me, meLoading, replacementsAllowed: effectiveReplacementsAllowed, canMigrateReemplazos, replacementOrganizations, dashboardAllowed, personalAllowed, auditoriaAllowed, administracionAllowed, configuracionAllowed })
+  const content = orgConfigError ? <div className="alert error"><span>{orgConfigError}</span></div> : routeContent(path, { token, can, onError, navigate, me, meLoading, activeOrganization, activeOrganizationId, replacementsAllowed: effectiveReplacementsAllowed, canMigrateReemplazos, dashboardAllowed, personalAllowed, auditoriaAllowed, administracionAllowed, configuracionAllowed })
   return <main className={collapsed ? 'app-layout sidebar-collapsed' : 'app-layout'}>
     <Sidebar path={path} collapsed={collapsed} onToggle={() => setCollapsed(value => !value)} onNavigate={navigate} onSignOut={onSignOut} replacementsAllowed={effectiveReplacementsAllowed} dashboardAllowed={dashboardAllowed} personalAllowed={personalAllowed} auditoriaAllowed={auditoriaAllowed} administracionAllowed={administracionAllowed} configuracionAllowed={configuracionAllowed} can={can} />
     <section className="app-main">
-      <header className="top-header"><button className="menu-toggle" onClick={() => setCollapsed(value => !value)} aria-label="Contraer navegación">≡</button><div className="header-spacer" /><label className="organization-switcher">Organización<select value={organizationId} onChange={event => setOrganizationId(event.target.value)} disabled={organizations.length < 2}><option value="">{currentOrganization ? currentOrganization.nombre : organizations.length ? 'Seleccionar organización' : 'Sin organización seleccionada'}</option>{organizations.map(item => <option key={item.id} value={item.id}>{item.nombre}</option>)}</select></label><div className="user-menu"><span className="user-avatar">{user.slice(0, 1).toUpperCase()}</span><div><strong>{user}</strong><small>Usuario autenticado</small></div><button className="link-button" onClick={onSignOut}>Salir</button></div></header>
+      <header className="top-header"><button className="menu-toggle" onClick={() => setCollapsed(value => !value)} aria-label="Contraer navegación">=</button><div className="header-spacer" />
+        <div className="organization-switcher">Organización{me?.global ? <select value={activeOrganizationId} onChange={event => { setSelectedOrgId(event.target.value); localStorage.setItem('sisge-selected-org', event.target.value) }} disabled={(me.organizaciones?.length ?? 0) === 0}><option value="">Seleccionar organización</option>{(me.organizaciones ?? []).map(item => <option key={item.id} value={item.id}>{item.nombre}</option>)}</select> : <span className="org-badge">{me?.organizacion?.nombre ?? 'Sin organización'}</span>}</div>
+        <div className="user-menu"><span className="user-avatar">{user.slice(0, 1).toUpperCase()}</span><div><strong>{user}</strong><small>{me?.rolGlobal ?? 'Usuario'}</small></div><button className="link-button" onClick={onSignOut}>Salir</button></div>
+      </header>
       <div className="page-content"><Breadcrumb path={path} /><PageHeader path={path} />{error && <div className="alert error"><span>{error}</span><button onClick={() => onError('')}>×</button></div>}{content}</div>
     </section>
   </main>
@@ -214,10 +213,10 @@ function PageHeader({ path }: { path: string }) {
 }
 function Breadcrumb({ path }: { path: string }) { const labels = path.split('/').filter(Boolean).map(part => ({ dashboard: 'Dashboard', personal: 'Personal', legajos: 'Legajos', reemplazos: 'Reemplazos', auditoria: 'Auditoría', administracion: 'Administración', configuracion: 'Configuración', 'nueva-carga': 'Nueva carga', importaciones: 'Importaciones', pendientes: 'Pendientes', historico: 'Histórico', 'migrar-historico': 'Migrar histórico', relevamiento: 'Relevamiento', validacion: 'Validación', diferencias: 'Diferencias', historial: 'Historial', usuarios: 'Usuarios', 'roles-y-permisos': 'Roles y permisos', permisos: 'Permisos', organizaciones: 'Organizaciones', perfil: 'Perfil', preferencias: 'Preferencias' }[part] ?? part)); return <div className="breadcrumbs">{labels.join(' > ')}</div> }
 
-type RouteContext = { token: string; can: (permission: string, orgId?: string | number) => boolean; onError: (message: string) => void; navigate: (path: string, replace?: boolean) => void; organizations: Organization[]; global: boolean; organizationId: string; me: AuthMe | null; meLoading: boolean; replacementsAllowed: boolean; canMigrateReemplazos: boolean; replacementOrganizations: Organization[]; dashboardAllowed: boolean; personalAllowed: boolean; auditoriaAllowed: boolean; administracionAllowed: boolean; configuracionAllowed: boolean }
+type RouteContext = { token: string; can: (permission: string) => boolean; onError: (message: string) => void; navigate: (path: string, replace?: boolean) => void; me: Me | null; meLoading: boolean; activeOrganization: OrganizationSummary | null; activeOrganizationId: string; replacementsAllowed: boolean; canMigrateReemplazos: boolean; dashboardAllowed: boolean; personalAllowed: boolean; auditoriaAllowed: boolean; administracionAllowed: boolean; configuracionAllowed: boolean }
 function routeContent(path: string, context: RouteContext) {
   if (context.meLoading) return <p className="empty">Cargando permisos…</p>
-  const denied = (msg = 'No tenés permiso para acceder a este módulo.') => <AccessDenied message={msg} />
+  const denied = (msg = 'Sin permiso') => <AccessDenied message={msg} />
   if (path === '/' || path === '/dashboard') return context.dashboardAllowed ? <Dashboard onNavigate={context.navigate} replacementsAllowed={context.replacementsAllowed} personalAllowed={context.personalAllowed} auditoriaAllowed={context.auditoriaAllowed} /> : denied()
   if (path.startsWith('/personal')) {
     if (!context.personalAllowed) return denied()
@@ -226,17 +225,17 @@ function routeContent(path: string, context: RouteContext) {
     return denied()
   }
   if (path.startsWith('/reemplazos')) {
-    if (!context.replacementsAllowed) return denied('No tenés permiso para acceder al módulo de reemplazos.')
+    if (!context.replacementsAllowed) return denied('Sin permiso')
+    const org = context.activeOrganization ? [context.activeOrganization] : []
     if (path === '/reemplazos') return <ReplacementsHome onNavigate={context.navigate} can={context.can} />
-    if (path === '/reemplazos/nueva-carga') return <Upload token={context.token} organizations={context.replacementOrganizations} onComplete={() => context.navigate('/reemplazos/importaciones')} onError={context.onError} />
-    if (path === '/reemplazos/importaciones') return <Imports token={context.token} organizations={context.replacementOrganizations} onError={context.onError} />
-    if (path.startsWith('/reemplazos/importaciones/')) return <ReplacementDetail token={context.token} importId={path.split('/').pop() ?? ''} onError={context.onError} />
-    if (path === '/reemplazos/pendientes') return <AdminImports token={context.token} can={context.can} onError={context.onError} />
+    if (path === '/reemplazos/nueva-carga') return context.can('REEMPLAZOS_NUEVA_CARGA') ? <Upload token={context.token} organizations={org} onComplete={() => context.navigate('/reemplazos/importaciones')} onError={context.onError} /> : denied()
+    if (path === '/reemplazos/importaciones') return context.can('REEMPLAZOS_IMPORTACIONES') ? <Imports token={context.token} organizations={org} onError={context.onError} /> : denied()
+    if (path.startsWith('/reemplazos/importaciones/')) return context.can('REEMPLAZOS_IMPORTACIONES') ? <ReplacementDetail token={context.token} importId={path.split('/').pop() ?? ''} onError={context.onError} /> : denied()
+    if (path === '/reemplazos/pendientes') return context.can('REEMPLAZOS_PENDIENTE_REVISION') ? <AdminImports token={context.token} can={context.can} onError={context.onError} /> : denied()
     if (path === '/reemplazos/migrar-historico') return context.canMigrateReemplazos ? <Migration token={context.token} can={context.can} request={api} /> : denied()
-    if (path === '/reemplazos/historico') return <History token={context.token} request={api} onError={context.onError} organizations={context.replacementOrganizations} global={Boolean(context.me?.global)} organizationId={context.organizationId} />
-    return denied('No tenés permiso para acceder al módulo de reemplazos.')
-  }
-  if (path.startsWith('/auditoria')) {
+    if (path === '/reemplazos/historico') return context.can('REEMPLAZANTES_VER') ? <History token={context.token} request={api} onError={context.onError} organizations={context.me?.global ? context.me.organizaciones : org} global={Boolean(context.me?.global)} organizationId={context.activeOrganizationId} /> : denied()
+    return denied('Sin permiso')
+  }  if (path.startsWith('/auditoria')) {
     if (!context.auditoriaAllowed) return denied()
     if (path === '/auditoria/relevamiento') return <AuditOverview />
     if (path === '/auditoria/importaciones') return <PersonalSurvey token={context.token} can={context.can} request={api} onError={context.onError} />
@@ -279,7 +278,6 @@ function PendingFeature({ title, text }: { title: string; text: string }) { retu
 function Settings({ path }: { path: string }) { return <section className="card pending-feature"><h2>{path.endsWith('perfil') ? 'Perfil' : 'Preferencias'}</h2><p>La configuraciÃ³n de cuenta estarÃ¡ disponible prÃ³ximamente.</p></section> }
 function LegajoDetail() { return <section className="card pending-feature"><h2>Detalle del legajo</h2><p>El detalle estarÃ¡ disponible cuando el backend exponga la consulta individual de personas.</p><div className="tabs"><button className="active">Datos personales</button>{['Datos laborales', 'Destino', 'SituaciÃ³n', 'Licencias', 'Novedades', 'DocumentaciÃ³n', 'Historial'].map(item => <button key={item} disabled>{item} Â· PrÃ³ximamente</button>)}</div></section> }
 function slug(value: string) { return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, '-') }
-function tokenUser(token: string) { try { const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))) as Record<string, unknown>; return String(payload.name ?? payload.nombre ?? payload.email ?? payload.sub ?? 'Usuario') } catch { return 'Usuario' } }
 function onReemplazosError(error: unknown, onError: (message: string) => void) {
   if (error instanceof ApiError && error.status === 403) {
     window.dispatchEvent(new Event('sisge-reemplazos-forbidden'))
@@ -753,44 +751,6 @@ function dateInput(value: string) {
 }
 function digits(value: string) { return value.replace(/\D/g, '') }
 function formatDni(value?: string | null) { const result = digits(value ?? ''); return result ? new Intl.NumberFormat('es-AR').format(Number(result)) : 'â€”' }
-type SessionScope = { global: boolean; organizationId: string }
-function tokenPayload(token: string): Record<string, unknown> {
-  try {
-    const encoded = token.split('.')[1]
-    if (!encoded) return {}
-    const value: unknown = JSON.parse(atob(encoded.replace(/-/g, '+').replace(/_/g, '/')))
-    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
-  } catch { return {} }
-}
-function organizationValue(value: unknown): string {
-  if (typeof value === 'number' && Number.isFinite(value)) return String(value)
-  if (typeof value === 'string' && value.trim()) return value.trim()
-  if (value && typeof value === 'object' && !Array.isArray(value)) return organizationValue((value as Record<string, unknown>).id)
-  return ''
-}
-function globalValue(value: unknown): boolean | undefined {
-  if (typeof value === 'boolean') return value
-  if (typeof value === 'string') {
-    const normalized = value.trim().toLowerCase()
-    if (['true', '1', 'global'].includes(normalized)) return true
-    if (['false', '0', 'organizacion', 'organization'].includes(normalized)) return false
-  }
-  return undefined
-}
-function sessionScope(token: string, organizations: Organization[]): SessionScope {
-  const payload = tokenPayload(token)
-  const organizationId = organizationValue(payload.organizacionId ?? payload.organizationId ?? payload.organizacion ?? payload.organization ?? payload.orgId)
-  const role = payload.rolGlobal ?? payload.globalRole
-  const global = globalValue(payload.global ?? payload.esGlobal) ?? globalValue(role)
-    ?? (role && typeof role === 'object' ? globalValue((role as Record<string, unknown>).globalRole) : undefined)
-  if (global === true) return { global: true, organizationId: '' }
-  if (global === false) return { global: false, organizationId }
-  if (organizationId) return { global: false, organizationId }
-  if (organizations.length === 1) return { global: false, organizationId: String(organizations[0].id) }
-  return { global: true, organizationId: '' }
-}
-
-
 function Status({ value }: { value: string }) { return <span className={`status status-${value.toLowerCase()}`}>{value.replace(/_/g, ' ')}</span> }
 function Stat({ label: statLabel, value }: { label: string; value: number }) { return <div className="stat"><strong>{value}</strong><span>{statLabel}</span></div> }
 function Empty({ text }: { text: string }) { return <p className="empty">{text}</p> }

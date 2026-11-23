@@ -1,4 +1,4 @@
-# SISGE Frontend
+﻿# SISGE Frontend
 
 Interfaz web de SISGE para la gestión de Recursos Humanos. Mantiene React, Vite, TypeScript ya existente en el repositorio y autenticación JWT contra la API de SisGe.
 
@@ -47,6 +47,25 @@ El shell de la aplicación está compuesto por `Application`, `Sidebar`, `Breadc
 | Permisos | `GET /api/v1/permisos`, `GET /api/v1/permisos/{id}`, `POST /api/v1/permisos`, `PUT /api/v1/permisos/{id}`, `DELETE /api/v1/permisos/{id}` |
 | Organizaciones (admin) | `GET /api/v1/admin/organizaciones`, `GET /api/v1/admin/organizaciones/{id}`, `POST /api/v1/admin/organizaciones`, `PUT /api/v1/admin/organizaciones/{id}`, `DELETE /api/v1/admin/organizaciones/{id}` |
 
+## Permisos por módulo (frontend)
+
+Fuente: `GET /api/v1/auth/me` (`me.permissions`). El frontend usa permisos para UX; el backend debe devolver 403 en endpoints no autorizados.
+
+| Módulo | Ruta | Permiso requerido |
+| --- | --- | --- |
+| Dashboard | `/dashboard` | `DASHBOARD_VER` |
+| Legajos / Personal | `/personal/legajos` | `LEGAJOS_VER` |
+| Auditoría | `/auditoria/*` | `AUDITORIA_VER` |
+| Reemplazos (módulo) | `/reemplazos` | `REEMPLAZANTES_VER` o permisos de acción de reemplazos |
+| Reemplazos - Nueva carga | `/reemplazos/nueva-carga` | `REEMPLAZOS_NUEVA_CARGA` |
+| Reemplazos - Importaciones | `/reemplazos/importaciones` | `REEMPLAZOS_IMPORTACIONES` |
+| Reemplazos - Pendientes de revisión | `/reemplazos/pendientes` | `REEMPLAZOS_PENDIENTE_REVISION` |
+| Reemplazos - Migrar histórico | `/reemplazos/migrar-historico` | `IMPORTACIONES_APROBAR` + `IMPORTACIONES_CERRAR` |
+| Reemplazos - Histórico / PDF | `/reemplazos/historico`, `/api/v1/reemplazantes/reporte` | `REEMPLAZANTES_VER` |
+| Administración - Usuarios | `/administracion/usuarios` | `USUARIOS_GESTIONAR` |
+| Administración - Permisos | `/administracion/permisos` | `PERMISOS_GESTIONAR` |
+| Administración - Organizaciones | `/administracion/organizaciones` | `ORGANIZACIONES_GESTIONAR` |
+| Configuración | `/configuracion/*` | siempre visible |
 ## Funcionalidades preparadas
 
 - Dashboard y tarjetas de gestión sin métricas inventadas.
@@ -66,3 +85,4 @@ El shell de la aplicación está compuesto por `Application`, `Sidebar`, `Breadc
 - Si se desea un historial de importaciones de personal, un `GET /api/v1/personal/importaciones` paginado.
 
 Las acciones de Administración no ejecutan solicitudes hasta que sus APIs estén disponibles.
+
